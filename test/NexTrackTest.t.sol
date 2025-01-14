@@ -59,15 +59,15 @@ contract NexTrackTest is Test {
         vm.prank(REGISTERED_MANUFACTURER);
         nexTrack.registerProduct(name, description, category, TOTAL_QUANTITY);
 
-        uint256 productId = nexTrack.getManufacturerProducts(REGISTERED_MANUFACTURER)[0];
+        uint256 productId = nexTrack.getCurrentInventory(REGISTERED_MANUFACTURER)[0];
         NexTrack.ProductBatch memory productBatch = nexTrack.getProductDetails(productId);
 
         assertEq(productBatch.name, name);
         assertEq(productBatch.description, description);
         assertEq(uint8(productBatch.category), uint8(category));
-        assertEq(productBatch.currentOwner, REGISTERED_MANUFACTURER);
+        assertEq(productBatch.owner, REGISTERED_MANUFACTURER);
         assertEq(uint8(productBatch.status), uint8(NexTrack.Status.Manufactured));
-        assertEq(productBatch.intendedReceiver, address(0));
+        assertEq(productBatch.intendedRecipient, address(0));
     }
 
     function testEmitsEventOnProductRegistration() public {
@@ -108,25 +108,25 @@ contract NexTrackTest is Test {
     }
 
     function testRevertsIfNotCurrentOwner() public productRegistered {
-        uint256 productId = nexTrack.getManufacturerProducts(REGISTERED_MANUFACTURER)[0];
+        uint256 productId = nexTrack.getCurrentInventory(REGISTERED_MANUFACTURER)[0];
         vm.expectRevert(NexTrack.NexTrack__NotCurrentOwner.selector);
         vm.prank(USER);
         nexTrack.initiateTransfer(productId, USER, QUANTITY_TO_SHIP);
     }
 
     function testInitiateTransfer() public productRegistered {
-        uint256 productId = nexTrack.getManufacturerProducts(REGISTERED_MANUFACTURER)[0];
+        uint256 productId = nexTrack.getCurrentInventory(REGISTERED_MANUFACTURER)[0];
         vm.prank(REGISTERED_MANUFACTURER);
         nexTrack.initiateTransfer(productId, USER, QUANTITY_TO_SHIP);
 
         NexTrack.ProductBatch memory batchDetails = nexTrack.getProductDetails(productId);
         assertEq(uint8(batchDetails.status), uint8(NexTrack.Status.InTransit));
-        assertEq(batchDetails.intendedReceiver, USER);
+        assertEq(batchDetails.intendedRecipient, USER);
         assertEq(batchDetails.quantityToShip, QUANTITY_TO_SHIP);
     }
 
     function testEmitsEventOnTransferInitiation() public productRegistered {
-        uint256 productId = nexTrack.getManufacturerProducts(REGISTERED_MANUFACTURER)[0];
+        uint256 productId = nexTrack.getCurrentInventory(REGISTERED_MANUFACTURER)[0];
         vm.expectEmit(true, true, true, false, address(nexTrack));
         emit NexTrack.TransferInitiated(productId, USER, QUANTITY_TO_SHIP, block.timestamp);
         vm.prank(REGISTERED_MANUFACTURER);
@@ -138,29 +138,31 @@ contract NexTrackTest is Test {
     ////////////////////////////
 
     modifier transferInitiated() {
-        uint256 batchId = nexTrack.getManufacturerProducts(REGISTERED_MANUFACTURER)[0];
+        uint256 batchId = nexTrack.getCurrentInventory(REGISTERED_MANUFACTURER)[0];
+        NexTrack.ProductBatch memory batch = nexTrack.getProductDetails(batchId); 
         vm.prank(REGISTERED_MANUFACTURER);
         nexTrack.initiateTransfer(batchId, USER, QUANTITY_TO_SHIP);
         _;
     }
 
     function testRevertsIfNotIntendedRecipient() public productRegistered transferInitiated {
-        uint256 batchId = nexTrack.getManufacturerProducts(REGISTERED_MANUFACTURER)[0];
+        uint256 batchId = nexTrack.getCurrentInventory(REGISTERED_MANUFACTURER)[0];
         vm.expectRevert(NexTrack.NexTrack__NotIntendedRecipient.selector);
         vm.prank(RANDOM_USER);
         nexTrack.confirmTransfer(batchId);
     }
 
     function testConfirmTransfer() public productRegistered transferInitiated {
-        uint256 parentBatchId = nexTrack.getManufacturerProducts(REGISTERED_MANUFACTURER)[0];
+        uint256 parentBatchId = nexTrack.getCurrentInventory(REGISTERED_MANUFACTURER)[0];
         vm.prank(USER);
+        console2.log("intendedRecipient: ", nexTrack.getProductDetails(parentBatchId).intendedRecipient);
         uint256 newBatchId = nexTrack.confirmTransfer(parentBatchId);
 
         NexTrack.ProductBatch memory batchDetails = nexTrack.getProductDetails(parentBatchId);
 
         // Assert parent batch
         assertEq(uint8(batchDetails.status), uint8(NexTrack.Status.Manufactured));
-        assertEq(batchDetails.intendedReceiver, address(0));
+        assertEq(batchDetails.intendedRecipient, address(0));
         assertEq(batchDetails.totalQuantity, TOTAL_QUANTITY - QUANTITY_TO_SHIP);
         assertEq(batchDetails.quantityToShip, 0);
         assertEq(batchDetails.parentBatch, DEFAULT_BATCH_ID);
@@ -168,9 +170,9 @@ contract NexTrackTest is Test {
         NexTrack.ProductBatch memory newBatchDetails = nexTrack.getProductDetails(newBatchId);
 
         // Assert child batch
-        assertEq(newBatchDetails.currentOwner, USER);
+        assertEq(newBatchDetails.owner, USER);
         assertEq(uint8(newBatchDetails.status), uint8(NexTrack.Status.InWarehouse));
-        assertEq(newBatchDetails.intendedReceiver, address(0));
+        assertEq(newBatchDetails.intendedRecipient, address(0));
         assertEq(newBatchDetails.totalQuantity, QUANTITY_TO_SHIP);
         assertEq(newBatchDetails.quantityToShip, 0);
         assertEq(newBatchDetails.parentBatch, parentBatchId);

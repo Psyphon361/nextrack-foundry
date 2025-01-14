@@ -66,9 +66,9 @@ contract NexTrack is Ownable {
         string name; // Product name
         string description; // Product description
         Category category; // Product category
-        address currentOwner; // Current supply chain owner
+        address owner; // Current supply chain owner
         Status status; // Current status in supply chain
-        address intendedReceiver; // Address of the specified recipient for the current transfer, set to address(0) if no transfer is in progress
+        address intendedRecipient; // Address of the specified recipient for the current transfer, set to address(0) if no transfer is in progress
         uint256 totalQuantity; // Number of items in this batch
         uint256 quantityToShip;
         uint256 parentBatch; // Parent batch ID
@@ -79,12 +79,9 @@ contract NexTrack is Ownable {
                         STATE VARIABLES
     //////////////////////////////////////////////////////////*/
 
-    mapping(uint256 => ProductBatch) public s_products; // Maps product IDs to their details
-    mapping(address => uint256[]) public s_manufacturerProducts;    // Tracks product registrations made by a manufacturer, maps address to a list of product IDs.
-                                                                    // This is not the current quantity in the inventory, it's the original quantity registered by the manufacturer.
-    mapping(address => mapping(uint256 batchId => uint256 quantity)) public s_currentInventory; // Tracks current inventory, maps address to a list of product IDs
+    mapping(uint256 => ProductBatch) public s_batches; // Maps batch IDs to their details
+    mapping(address => uint256[]) public s_currentInventory; // Tracks current inventory, maps address to a list of batch IDs
     mapping(address => bool) public s_registeredManufacturers; // Maps manufacturers to a boolean value indicating if they are registered
-    mapping(uint256 => uint256) public parentBatch; // Maps child batch IDs to their parent batch IDs
     address[] public s_manufacturers;
 
     uint256 public constant DEFAULT_BATCH_ID = 0;
@@ -99,9 +96,9 @@ contract NexTrack is Ownable {
         string indexed name,
         string description,
         Category category,
-        address currentOwner,
+        address owner,
         Status status,
-        address intendedReceiver,
+        address intendedRecipient,
         uint256 indexed totalQuantity,
         uint256 quantityToShip,
         uint256 parentBatch,
@@ -113,9 +110,9 @@ contract NexTrack is Ownable {
         string indexed name,
         string description,
         Category category,
-        address currentOwner,
+        address owner,
         Status status,
-        address intendedReceiver,
+        address intendedRecipient,
         uint256 indexed totalQuantity,
         uint256 quantityToShip,
         uint256 parentBatch,
@@ -123,7 +120,7 @@ contract NexTrack is Ownable {
     );
 
     event TransferInitiated(
-        uint256 indexed id, address indexed intendedReceiver, uint256 indexed quantity, uint256 timestamp
+        uint256 indexed id, address indexed intendedRecipient, uint256 indexed quantity, uint256 timestamp
     );
 
     event ProductReceived(uint256 indexed id, uint256 indexed totalQuantity, uint256 timestamp);
@@ -139,15 +136,15 @@ contract NexTrack is Ownable {
         _;
     }
 
-    modifier onlyCurrentOwner(uint256 id) {
-        if (s_products[id].currentOwner != msg.sender) {
+    modifier onlyBatchOwner(uint256 id) {
+        if (s_batches[id].owner != msg.sender) {
             revert NexTrack__NotCurrentOwner();
         }
         _;
     }
 
     modifier onlyIntendedRecipient(uint256 id) {
-        if (s_products[id].intendedReceiver != msg.sender) {
+        if (s_batches[id].intendedRecipient != msg.sender) {
             revert NexTrack__NotIntendedRecipient();
         }
         _;
@@ -171,18 +168,18 @@ contract NexTrack is Ownable {
         _registerProduct(name, description, category, totalQuantity);
     }
 
-    function initiateTransfer(uint256 id, address intendedReceiver, uint256 quantityToShip)
+    function initiateTransfer(uint256 id, address intendedRecipient, uint256 quantityToShip)
         public
-        onlyCurrentOwner(id)
+        onlyBatchOwner(id)
     {
-        if (quantityToShip > s_products[id].totalQuantity) {
+        if (quantityToShip > s_batches[id].totalQuantity) {
             revert NexTrack__QuantityExceedsAvailable();
         }
-        _initiateTransfer(id, intendedReceiver, quantityToShip);
+        _initiateTransfer(id, intendedRecipient, quantityToShip);
     }
 
-    function confirmTransfer(uint256 id) public onlyIntendedRecipient(id) returns(uint256 newBatchId) {
-        // 1. update the original batch -> reset intendedReceiver and status to Manufactured
+    function confirmTransfer(uint256 id) public onlyIntendedRecipient(id) returns (uint256 newBatchId) {
+        // 1. update the original batch -> reset intendedRecipient and status to Manufactured
         // 2. create a new batch with the received quantity and status to InWarehouse
         return _confirmTransfer(id);
     }
@@ -191,7 +188,9 @@ contract NexTrack is Ownable {
                         INTERNAL FUNCTIONS
     //////////////////////////////////////////////////////////*/
 
-    function _registerProduct(string memory name, string memory description, Category category, uint256 totalQuantity) internal {
+    function _registerProduct(string memory name, string memory description, Category category, uint256 totalQuantity)
+        internal
+    {
         uint256 id = _generateProductId(name, category, totalQuantity, DEFAULT_BATCH_ID);
 
         ProductBatch memory newProductBatch = ProductBatch({
@@ -199,18 +198,17 @@ contract NexTrack is Ownable {
             name: name,
             description: description,
             category: category,
-            currentOwner: msg.sender,
+            owner: msg.sender,
             status: Status.Manufactured,
-            intendedReceiver: address(0),
+            intendedRecipient: address(0),
             totalQuantity: totalQuantity,
             quantityToShip: DEFAULT_QUANTITY_TO_SHIP,
             parentBatch: DEFAULT_BATCH_ID,
             timestamp: block.timestamp
         });
 
-        s_products[id] = newProductBatch;
-        s_manufacturerProducts[msg.sender].push(id);
-        s_currentInventory[msg.sender][id] = totalQuantity;
+        s_batches[id] = newProductBatch;
+        s_currentInventory[msg.sender].push(id);
 
         emit ProductRegistered(
             id,
@@ -241,44 +239,48 @@ contract NexTrack is Ownable {
         return id;
     }
 
-    function _initiateTransfer(uint256 id, address intendedReceiver, uint256 quantityToShip) internal {
-        s_products[id].status = Status.InTransit;
-        s_products[id].intendedReceiver = intendedReceiver;
-        s_products[id].timestamp = block.timestamp;
-        s_products[id].quantityToShip = quantityToShip;
-        emit TransferInitiated(id, intendedReceiver, quantityToShip, block.timestamp);
+    function _initiateTransfer(uint256 id, address intendedRecipient, uint256 quantityToShip) internal {
+        ProductBatch storage batch = s_batches[id]; 
+
+        batch.status = Status.InTransit;
+        batch.intendedRecipient = intendedRecipient;
+        batch.timestamp = block.timestamp;
+        batch.quantityToShip = quantityToShip;
+
+        emit TransferInitiated(id, intendedRecipient, quantityToShip, block.timestamp);
     }
 
     function _confirmTransfer(uint256 id) internal returns (uint256) {
-        uint256 quantityReceived = s_products[id].quantityToShip;
+        ProductBatch storage oldBatch = s_batches[id]; 
+        uint256 quantityReceived = oldBatch.quantityToShip;
 
         // Update parent batch
-        s_products[id].status = Status.Manufactured;
-        s_products[id].intendedReceiver = address(0);
-        s_products[id].timestamp = block.timestamp;
-        s_products[id].totalQuantity -= quantityReceived;
-        s_products[id].quantityToShip = 0;
-        s_currentInventory[s_products[id].currentOwner][id] = s_products[id].totalQuantity;
+        oldBatch.status = Status.Manufactured;
+        oldBatch.intendedRecipient = address(0);
+        oldBatch.timestamp = block.timestamp;
+        oldBatch.totalQuantity -= quantityReceived;
+        oldBatch.quantityToShip = 0;
+        s_currentInventory[oldBatch.owner][id] = oldBatch.totalQuantity;
 
-        uint256 newBatchId = _generateProductId(s_products[id].name, s_products[id].category, quantityReceived, id);
+        uint256 newBatchId = _generateProductId(oldBatch.name, oldBatch.category, quantityReceived, id);
 
         // Create new batch
         ProductBatch memory newProductBatch = ProductBatch({
             id: newBatchId,
-            name: s_products[id].name,
-            description: s_products[id].description,
-            category: s_products[id].category,
-            currentOwner: msg.sender,
+            name: oldBatch.name,
+            description: oldBatch.description,
+            category: oldBatch.category,
+            owner: msg.sender,
             status: Status.InWarehouse,
-            intendedReceiver: address(0),
+            intendedRecipient: address(0),
             totalQuantity: quantityReceived,
             quantityToShip: 0,
             parentBatch: id,
             timestamp: block.timestamp
         });
 
-        s_products[newBatchId] = newProductBatch;
-        s_currentInventory[newProductBatch.currentOwner][newBatchId] = quantityReceived;
+        s_batches[newBatchId] = newProductBatch;
+        s_currentInventory[newProductBatch.owner][newBatchId] = quantityReceived;
 
         // Emit event
         emit ReceivedAndCreatedBatch(
@@ -286,7 +288,7 @@ contract NexTrack is Ownable {
             newProductBatch.name,
             newProductBatch.description,
             newProductBatch.category,
-            newProductBatch.currentOwner,
+            newProductBatch.owner,
             Status.InWarehouse,
             address(0),
             quantityReceived,
@@ -302,12 +304,12 @@ contract NexTrack is Ownable {
                         GETTER FUNCTIONS
     //////////////////////////////////////////////////////////*/
 
-    function getManufacturerProducts(address manufacturer) public view returns (uint256[] memory) {
-        return s_manufacturerProducts[manufacturer];
+    function getCurrentInventory(address owner) public view returns (uint256[] memory) {
+        return s_currentInventory[owner];
     }
 
     function getProductDetails(uint256 id) public view returns (ProductBatch memory) {
-        return s_products[id];
+        return s_batches[id];
     }
 
     function getManufacturerCount() public view returns (uint256) {

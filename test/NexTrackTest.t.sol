@@ -139,7 +139,7 @@ contract NexTrackTest is Test {
 
     modifier transferInitiated() {
         uint256 batchId = nexTrack.getCurrentInventory(REGISTERED_MANUFACTURER)[0];
-        NexTrack.ProductBatch memory batch = nexTrack.getProductDetails(batchId); 
+        NexTrack.ProductBatch memory batch = nexTrack.getProductDetails(batchId);
         vm.prank(REGISTERED_MANUFACTURER);
         nexTrack.initiateTransfer(batchId, USER, QUANTITY_TO_SHIP);
         _;
@@ -155,9 +155,8 @@ contract NexTrackTest is Test {
     function testConfirmTransfer() public productRegistered transferInitiated {
         uint256 parentBatchId = nexTrack.getCurrentInventory(REGISTERED_MANUFACTURER)[0];
         vm.prank(USER);
-        console2.log("intendedRecipient: ", nexTrack.getProductDetails(parentBatchId).intendedRecipient);
         uint256 newBatchId = nexTrack.confirmTransfer(parentBatchId);
-
+ 
         NexTrack.ProductBatch memory batchDetails = nexTrack.getProductDetails(parentBatchId);
 
         // Assert parent batch
@@ -178,5 +177,15 @@ contract NexTrackTest is Test {
         assertEq(newBatchDetails.parentBatch, parentBatchId);
     }
 
-    function testEmitsEventOnTransferConfirmation() public productRegistered transferInitiated {}
+    function testEmitsEventOnTransferConfirmation() public productRegistered transferInitiated {
+        uint256 parentBatchId = nexTrack.getCurrentInventory(REGISTERED_MANUFACTURER)[0];
+        vm.expectEmit(true, true, true, true, address(nexTrack));
+        emit NexTrack.ReceivedAndCreatedBatch(uint64(
+            bytes8(
+                keccak256(abi.encodePacked(name, category, QUANTITY_TO_SHIP, parentBatchId, USER, block.timestamp))
+            )
+        ), name, description, category, USER, NexTrack.Status.InWarehouse, address(0), QUANTITY_TO_SHIP, 0, parentBatchId, block.timestamp);
+        vm.prank(USER);
+        nexTrack.confirmTransfer(parentBatchId);
+    }
 }

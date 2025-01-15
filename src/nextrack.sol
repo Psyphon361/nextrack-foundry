@@ -240,7 +240,7 @@ contract NexTrack is Ownable {
     }
 
     function _initiateTransfer(uint256 id, address intendedRecipient, uint256 quantityToShip) internal {
-        ProductBatch storage batch = s_batches[id]; 
+        ProductBatch storage batch = s_batches[id];
 
         batch.status = Status.InTransit;
         batch.intendedRecipient = intendedRecipient;
@@ -251,7 +251,7 @@ contract NexTrack is Ownable {
     }
 
     function _confirmTransfer(uint256 id) internal returns (uint256) {
-        ProductBatch storage oldBatch = s_batches[id]; 
+        ProductBatch storage oldBatch = s_batches[id];
         uint256 quantityReceived = oldBatch.quantityToShip;
 
         // Update parent batch
@@ -260,7 +260,6 @@ contract NexTrack is Ownable {
         oldBatch.timestamp = block.timestamp;
         oldBatch.totalQuantity -= quantityReceived;
         oldBatch.quantityToShip = 0;
-        s_currentInventory[oldBatch.owner][id] = oldBatch.totalQuantity;
 
         uint256 newBatchId = _generateProductId(oldBatch.name, oldBatch.category, quantityReceived, id);
 
@@ -280,7 +279,7 @@ contract NexTrack is Ownable {
         });
 
         s_batches[newBatchId] = newProductBatch;
-        s_currentInventory[newProductBatch.owner][newBatchId] = quantityReceived;
+        s_currentInventory[msg.sender].push(newBatchId);
 
         // Emit event
         emit ReceivedAndCreatedBatch(

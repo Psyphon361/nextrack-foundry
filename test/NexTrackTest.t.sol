@@ -52,27 +52,27 @@ contract NexTrackTest is Test {
     function testRevertsIfNotRegisteredManufacturer() public {
         vm.expectRevert(NexTrack.NexTrack__NotRegisteredManufacturer.selector);
         vm.prank(USER);
-        nexTrack.registerProduct(name, description, category, TOTAL_QUANTITY);
+        nexTrack.registerProductBatch(name, description, category, TOTAL_QUANTITY);
     }
 
     function testRegisterProduct() public {
         vm.prank(REGISTERED_MANUFACTURER);
-        nexTrack.registerProduct(name, description, category, TOTAL_QUANTITY);
+        nexTrack.registerProductBatch(name, description, category, TOTAL_QUANTITY);
 
-        uint256 productId = nexTrack.getCurrentInventory(REGISTERED_MANUFACTURER)[0];
-        NexTrack.ProductBatch memory productBatch = nexTrack.getProductDetails(productId);
+        uint256 batchId = nexTrack.getCurrentInventory(REGISTERED_MANUFACTURER)[0];
+        NexTrack.ProductBatch memory productBatch = nexTrack.getBatchDetails(batchId);
 
         assertEq(productBatch.name, name);
         assertEq(productBatch.description, description);
         assertEq(uint8(productBatch.category), uint8(category));
         assertEq(productBatch.owner, REGISTERED_MANUFACTURER);
-        assertEq(uint8(productBatch.status), uint8(NexTrack.Status.Manufactured));
+        assertEq(uint8(productBatch.status), uint8(NexTrack.ProductStatus.Manufactured));
         assertEq(productBatch.intendedRecipient, address(0));
     }
 
     function testEmitsEventOnProductRegistration() public {
         vm.expectEmit(true, true, true, true, address(nexTrack));
-        emit NexTrack.ProductRegistered(
+        emit NexTrack.ProductBatchRegistered(
             uint64(
                 bytes8(
                     keccak256(
@@ -86,7 +86,7 @@ contract NexTrackTest is Test {
             description,
             category,
             REGISTERED_MANUFACTURER,
-            NexTrack.Status.Manufactured,
+            NexTrack.ProductStatus.Manufactured,
             address(0),
             TOTAL_QUANTITY,
             DEFAULT_QUANTITY_TO_SHIP,
@@ -94,98 +94,191 @@ contract NexTrackTest is Test {
             block.timestamp
         );
         vm.prank(REGISTERED_MANUFACTURER);
-        nexTrack.registerProduct(name, description, category, TOTAL_QUANTITY);
+        nexTrack.registerProductBatch(name, description, category, TOTAL_QUANTITY);
     }
 
+
     ////////////////////////////
-    // Transfer Product Tests //
+    // Request Product Tests ///
     ////////////////////////////
 
     modifier productRegistered() {
         vm.prank(REGISTERED_MANUFACTURER);
-        nexTrack.registerProduct(name, description, category, TOTAL_QUANTITY);
+        nexTrack.registerProductBatch(name, description, category, TOTAL_QUANTITY);
         _;
     }
 
-    function testRevertsIfNotCurrentOwner() public productRegistered {
-        uint256 productId = nexTrack.getCurrentInventory(REGISTERED_MANUFACTURER)[0];
+    function testRevertsIfQuantityExceedsAvailable() public productRegistered {
+        uint256 batchId = nexTrack.getCurrentInventory(REGISTERED_MANUFACTURER)[0];
+        vm.expectRevert(NexTrack.NexTrack__QuantityExceedsAvailable.selector);
+        nexTrack.requestProductBatch(batchId, USER, TOTAL_QUANTITY + 1);
+    }
+
+    function testRequestProductBatch() public productRegistered {
+        uint256 batchId = nexTrack.getCurrentInventory(REGISTERED_MANUFACTURER)[0];
+        vm.prank(USER);
+        uint256 requestId = nexTrack.requestProductBatch(batchId, REGISTERED_MANUFACTURER, QUANTITY_TO_SHIP);
+
+        NexTrack.TransferRequest memory requestDetails = nexTrack.getTransferRequestDetails(requestId);
+        assertEq(requestDetails.batchId, batchId);
+        assertEq(requestDetails.seller, REGISTERED_MANUFACTURER);
+        assertEq(requestDetails.buyer, USER);
+        assertEq(requestDetails.quantityRequested, QUANTITY_TO_SHIP);
+        assertEq(uint8(requestDetails.status), uint8(NexTrack.RequestStatus.Pending));
+
+        uint256 sellerRequestId = nexTrack.getSellerTransferRequests(REGISTERED_MANUFACTURER)[0];
+        uint256 buyerRequestId = nexTrack.getBuyerTransferRequests(USER)[0];
+        assertEq(sellerRequestId, buyerRequestId);
+    }
+
+    function testEmitsEventOnProductRequest() public productRegistered {
+        uint256 batchId = nexTrack.getCurrentInventory(REGISTERED_MANUFACTURER)[0];
+        vm.expectEmit(true, true, true, true, address(nexTrack));
+        emit NexTrack.TransferRequested(
+            uint64(
+                bytes8(
+                    keccak256(
+                        abi.encodePacked(batchId, REGISTERED_MANUFACTURER, QUANTITY_TO_SHIP, block.timestamp)
+                    )
+                )
+            ),
+            batchId,
+            REGISTERED_MANUFACTURER,
+            USER,
+            QUANTITY_TO_SHIP,
+            NexTrack.RequestStatus.Pending,
+            block.timestamp
+        );
+        vm.prank(USER);
+        nexTrack.requestProductBatch(batchId, REGISTERED_MANUFACTURER, QUANTITY_TO_SHIP);
+    }
+
+    ////////////////////////////////
+    //// Initiate Transfer Tests ///
+    ////////////////////////////////
+
+    modifier productRequested() {
+        uint256 batchId = nexTrack.getCurrentInventory(REGISTERED_MANUFACTURER)[0];
+        vm.prank(USER);
+        uint256 requestId = nexTrack.requestProductBatch(batchId, REGISTERED_MANUFACTURER, QUANTITY_TO_SHIP);
+        _;
+    }
+
+    function testRevertsIfNotCurrentOwner() public productRegistered productRequested {
+        uint256 requestId = nexTrack.getSellerTransferRequests(REGISTERED_MANUFACTURER)[0];
         vm.expectRevert(NexTrack.NexTrack__NotCurrentOwner.selector);
         vm.prank(USER);
-        nexTrack.initiateTransfer(productId, USER, QUANTITY_TO_SHIP);
+        nexTrack.initiateTransfer(requestId);
     }
 
-    function testInitiateTransfer() public productRegistered {
-        uint256 productId = nexTrack.getCurrentInventory(REGISTERED_MANUFACTURER)[0];
+    function testInitiateTransfer() public productRegistered productRequested {
+        uint256 requestId = nexTrack.getSellerTransferRequests(REGISTERED_MANUFACTURER)[0];
         vm.prank(REGISTERED_MANUFACTURER);
-        nexTrack.initiateTransfer(productId, USER, QUANTITY_TO_SHIP);
+        nexTrack.initiateTransfer(requestId);
+        NexTrack.TransferRequest memory requestDetails = nexTrack.getTransferRequestDetails(requestId);
+        uint256 batchId = requestDetails.batchId;
+        NexTrack.ProductBatch memory batchDetails = nexTrack.getBatchDetails(batchId);
 
-        NexTrack.ProductBatch memory batchDetails = nexTrack.getProductDetails(productId);
-        assertEq(uint8(batchDetails.status), uint8(NexTrack.Status.InTransit));
+        assertEq(uint8(batchDetails.status), uint8(NexTrack.ProductStatus.InTransit));
         assertEq(batchDetails.intendedRecipient, USER);
         assertEq(batchDetails.quantityToShip, QUANTITY_TO_SHIP);
+        assertEq(uint8(requestDetails.status), uint8(NexTrack.RequestStatus.Approved));
     }
 
-    function testEmitsEventOnTransferInitiation() public productRegistered {
-        uint256 productId = nexTrack.getCurrentInventory(REGISTERED_MANUFACTURER)[0];
-        vm.expectEmit(true, true, true, false, address(nexTrack));
-        emit NexTrack.TransferInitiated(productId, USER, QUANTITY_TO_SHIP, block.timestamp);
+    function testEmitsEventOnTransferInitiation() public productRegistered productRequested {
+        uint256 requestId = nexTrack.getSellerTransferRequests(REGISTERED_MANUFACTURER)[0];
+        NexTrack.TransferRequest memory requestDetails = nexTrack.getTransferRequestDetails(requestId);
+        uint256 batchId = requestDetails.batchId;
+        vm.expectEmit(true, true, true, true, address(nexTrack));
+        emit NexTrack.TransferInitiated(requestId, batchId, USER, QUANTITY_TO_SHIP, block.timestamp);
         vm.prank(REGISTERED_MANUFACTURER);
-        nexTrack.initiateTransfer(productId, USER, QUANTITY_TO_SHIP);
+        nexTrack.initiateTransfer(requestId);
     }
 
-    ////////////////////////////
-    // Confirm Receipt Tests ///
-    ////////////////////////////
+    ///////////////////////////////
+    //// Confirm Transfer Tests ////
+    ///////////////////////////////
 
     modifier transferInitiated() {
-        uint256 batchId = nexTrack.getCurrentInventory(REGISTERED_MANUFACTURER)[0];
-        NexTrack.ProductBatch memory batch = nexTrack.getProductDetails(batchId);
+        uint256 requestId = nexTrack.getSellerTransferRequests(REGISTERED_MANUFACTURER)[0];
         vm.prank(REGISTERED_MANUFACTURER);
-        nexTrack.initiateTransfer(batchId, USER, QUANTITY_TO_SHIP);
+        nexTrack.initiateTransfer(requestId);
         _;
     }
 
-    function testRevertsIfNotIntendedRecipient() public productRegistered transferInitiated {
-        uint256 batchId = nexTrack.getCurrentInventory(REGISTERED_MANUFACTURER)[0];
+    function testRevertsIfNotIntendedRecipient() public productRegistered productRequested transferInitiated {
+        uint256 requestId = nexTrack.getSellerTransferRequests(REGISTERED_MANUFACTURER)[0];
         vm.expectRevert(NexTrack.NexTrack__NotIntendedRecipient.selector);
         vm.prank(RANDOM_USER);
-        nexTrack.confirmTransfer(batchId);
+        nexTrack.confirmTransfer(requestId);
     }
 
-    function testConfirmTransfer() public productRegistered transferInitiated {
-        uint256 parentBatchId = nexTrack.getCurrentInventory(REGISTERED_MANUFACTURER)[0];
+    function testConfirmTransfer() public productRegistered productRequested transferInitiated {
+        uint256 requestId = nexTrack.getSellerTransferRequests(REGISTERED_MANUFACTURER)[0];
+        NexTrack.TransferRequest memory requestDetails = nexTrack.getTransferRequestDetails(requestId);
+        uint256 parentBatchId = requestDetails.batchId;
         vm.prank(USER);
-        uint256 newBatchId = nexTrack.confirmTransfer(parentBatchId);
- 
-        NexTrack.ProductBatch memory batchDetails = nexTrack.getProductDetails(parentBatchId);
+        (, uint256 newBatchId) = nexTrack.confirmTransfer(requestId);
+        NexTrack.ProductBatch memory batchDetails = nexTrack.getBatchDetails(parentBatchId);
 
         // Assert parent batch
-        assertEq(uint8(batchDetails.status), uint8(NexTrack.Status.Manufactured));
+        assertEq(uint8(batchDetails.status), uint8(NexTrack.ProductStatus.Manufactured));
         assertEq(batchDetails.intendedRecipient, address(0));
         assertEq(batchDetails.totalQuantity, TOTAL_QUANTITY - QUANTITY_TO_SHIP);
         assertEq(batchDetails.quantityToShip, 0);
         assertEq(batchDetails.parentBatch, DEFAULT_BATCH_ID);
 
-        NexTrack.ProductBatch memory newBatchDetails = nexTrack.getProductDetails(newBatchId);
+        NexTrack.ProductBatch memory newBatchDetails = nexTrack.getBatchDetails(newBatchId);
 
         // Assert child batch
         assertEq(newBatchDetails.owner, USER);
-        assertEq(uint8(newBatchDetails.status), uint8(NexTrack.Status.InWarehouse));
+        assertEq(uint8(newBatchDetails.status), uint8(NexTrack.ProductStatus.InWarehouse));
         assertEq(newBatchDetails.intendedRecipient, address(0));
         assertEq(newBatchDetails.totalQuantity, QUANTITY_TO_SHIP);
         assertEq(newBatchDetails.quantityToShip, 0);
         assertEq(newBatchDetails.parentBatch, parentBatchId);
+
+        requestDetails = nexTrack.getTransferRequestDetails(requestId);
+
+        // Assert request
+        assertEq(uint8(requestDetails.status), uint8(NexTrack.RequestStatus.Completed));
+
     }
 
-    function testEmitsEventOnTransferConfirmation() public productRegistered transferInitiated {
-        uint256 parentBatchId = nexTrack.getCurrentInventory(REGISTERED_MANUFACTURER)[0];
+    function testEmitsEventOnTransferConfirmation() public productRegistered productRequested transferInitiated {
+        uint256 requestId = nexTrack.getSellerTransferRequests(REGISTERED_MANUFACTURER)[0];
+        NexTrack.TransferRequest memory requestDetails = nexTrack.getTransferRequestDetails(requestId);
+        uint256 parentBatchId = requestDetails.batchId;
+
+        // Expect the first event: RequestCompleted
         vm.expectEmit(true, true, true, true, address(nexTrack));
-        emit NexTrack.ReceivedAndCreatedBatch(uint64(
-            bytes8(
-                keccak256(abi.encodePacked(name, category, QUANTITY_TO_SHIP, parentBatchId, USER, block.timestamp))
-            )
-        ), name, description, category, USER, NexTrack.Status.InWarehouse, address(0), QUANTITY_TO_SHIP, 0, parentBatchId, block.timestamp);
+        emit NexTrack.RequestCompleted(
+            requestId,
+            USER,
+            block.timestamp
+        );
+
+        // Expect the second event: ReceivedAndCreatedBatch
+        vm.expectEmit(true, true, true, true, address(nexTrack));
+        emit NexTrack.ReceivedAndCreatedBatch(
+            requestId,
+            uint64(
+                bytes8(
+                    keccak256(abi.encodePacked(name, category, QUANTITY_TO_SHIP, parentBatchId, USER, block.timestamp))
+                )
+            ),
+            name,
+            description,
+            category,
+            USER,
+            NexTrack.ProductStatus.InWarehouse,
+            address(0),
+            QUANTITY_TO_SHIP,
+            0,
+            parentBatchId,
+            block.timestamp
+        );
         vm.prank(USER);
-        nexTrack.confirmTransfer(parentBatchId);
+        nexTrack.confirmTransfer(requestId);
     }
 }

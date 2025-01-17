@@ -34,10 +34,11 @@ contract NexTrack is Ownable {
     error NexTrack__NotCurrentOwner();
     error NexTrack__NotIntendedRecipient();
     error NexTrack__QuantityExceedsAvailable();
-    error NexTrack__TransferInitiationPending();
+    error NexTrack__RequestStillPending();
     error NexTrack__RequestAlreadyRejected();
     error NexTrack__RequestAlreadyApproved();
     error NexTrack__RequestAlreadyCompleted();
+    error NexTrack__QuantityCannotBeZero();
 
     /*//////////////////////////////////////////////////////////
                         TYPE DECLARATIONS
@@ -57,13 +58,6 @@ contract NexTrack is Ownable {
         Other
     }
 
-    enum ProductStatus {
-        Manufactured,
-        InTransit,
-        InWarehouse,
-        Delivered
-    }
-
     enum RequestStatus {
         Pending,
         Approved,
@@ -73,17 +67,14 @@ contract NexTrack is Ownable {
 
     // STRUCTS
     struct ProductBatch {
-        uint256 id; // Unique product ID
+        uint256 batchId; // Unique product ID
         string name; // Product name
         string description; // Product description
         Category category; // Product category
         address owner; // Current supply chain owner
-        ProductStatus status; // Current status in supply chain
-        address intendedRecipient; // Address of the specified recipient for the current transfer, set to address(0) if no transfer is in progress
         uint256 totalQuantity; // Number of items in this batch
-        uint256 quantityToShip;
         uint256 parentBatch; // Parent batch ID
-        uint256 timestamp; // Last status update timestamp
+        uint256 timestamp; // Last update timestamp
     }
 
     struct TransferRequest {
@@ -123,19 +114,12 @@ contract NexTrack is Ownable {
         string description,
         Category category,
         address owner,
-        ProductStatus status,
-        address intendedRecipient,
         uint256 indexed totalQuantity,
-        uint256 quantityToShip,
         uint256 parentBatch,
         uint256 timestamp
     );
 
-    event RequestCompleted(
-        uint256 indexed requestId,
-        address indexed buyer,
-        uint256 timestamp
-    );
+    event RequestCompleted(uint256 indexed requestId, address indexed buyer, uint256 timestamp);
 
     event ReceivedAndCreatedBatch(
         uint256 indexed requestId,
@@ -144,10 +128,7 @@ contract NexTrack is Ownable {
         string description,
         Category category,
         address indexed owner,
-        ProductStatus status,
-        address intendedRecipient,
         uint256 totalQuantity,
-        uint256 quantityToShip,
         uint256 parentBatch,
         uint256 timestamp
     );
@@ -162,8 +143,20 @@ contract NexTrack is Ownable {
         uint256 timestamp
     );
 
-    event TransferInitiated(
-        uint256 indexed requestId, uint256 indexed batchId, address indexed intendedRecipient, uint256 quantity, uint256 timestamp
+    event TransferApproved(
+        uint256 indexed requestId,
+        uint256 indexed batchId,
+        address indexed buyer,
+        uint256 quantity,
+        uint256 timestamp
+    );
+
+    event TransferRejected(
+        uint256 indexed requestId,
+        uint256 indexed batchId,
+        address indexed buyer,
+        uint256 quantity,
+        uint256 timestamp
     );
 
     /*//////////////////////////////////////////////////////////
@@ -180,7 +173,6 @@ contract NexTrack is Ownable {
     modifier onlyBatchOwner(uint256 requestId) {
         uint256 batchId = s_transferRequests[requestId].batchId;
 
-
         if (s_batches[batchId].owner != msg.sender) {
             revert NexTrack__NotCurrentOwner();
         }
@@ -188,8 +180,34 @@ contract NexTrack is Ownable {
     }
 
     modifier onlyIntendedRecipient(uint256 requestId) {
-        if (s_batches[s_transferRequests[requestId].batchId].intendedRecipient != msg.sender) {
+        if (s_transferRequests[requestId].buyer != msg.sender) {
             revert NexTrack__NotIntendedRecipient();
+        }
+        _;
+    }
+
+    modifier validateRequestStatus(uint256 requestId) {
+        if (s_transferRequests[requestId].status == RequestStatus.Approved) {
+            revert NexTrack__RequestAlreadyApproved();
+        }
+        if (s_transferRequests[requestId].status == RequestStatus.Rejected) {
+            revert NexTrack__RequestAlreadyRejected();
+        }
+        if (s_transferRequests[requestId].status == RequestStatus.Completed) {
+            revert NexTrack__RequestAlreadyCompleted();
+        }
+        _;
+    }
+
+    modifier validateStatusBeforeConfirm(uint256 requestId) {
+        if (s_transferRequests[requestId].status == RequestStatus.Pending) {
+            revert NexTrack__RequestStillPending();
+        }
+        if (s_transferRequests[requestId].status == RequestStatus.Rejected) {
+            revert NexTrack__RequestAlreadyRejected();
+        }
+        if (s_transferRequests[requestId].status == RequestStatus.Completed) {
+            revert NexTrack__RequestAlreadyCompleted();
         }
         _;
     }
@@ -218,6 +236,10 @@ contract NexTrack is Ownable {
         public
         returns (uint256 requestId)
     {
+        if (quantityRequested == 0) {
+            revert NexTrack__QuantityCannotBeZero();
+        }
+
         ProductBatch memory batch = s_batches[batchId];
         if (batch.totalQuantity < quantityRequested) {
             revert NexTrack__QuantityExceedsAvailable();
@@ -225,47 +247,25 @@ contract NexTrack is Ownable {
         return _requestProductBatch(batchId, seller, quantityRequested);
     }
 
-    function initiateTransfer(
-        uint256 requestId
-    ) public onlyBatchOwner(requestId) {
-        if (s_transferRequests[requestId].status == RequestStatus.Approved) {
-            revert NexTrack__RequestAlreadyApproved();
-        }
-        if(s_transferRequests[requestId].status == RequestStatus.Rejected) {
-            revert NexTrack__RequestAlreadyRejected();
-        }
-        if(s_transferRequests[requestId].status == RequestStatus.Completed) {
-            revert NexTrack__RequestAlreadyCompleted();
-        }
+    // initiate -> already approved/rejected/completed
+    // reject -> already approved/rejected/completed
+    // confirm -> still pending/ already rejected/completed
 
-        TransferRequest storage request = s_transferRequests[requestId];
-        uint256 batchId = request.batchId;
-        address intendedRecipient = request.buyer;
-        uint256 quantityToShip = request.quantityRequested;
-
-        _initiateTransfer(requestId, batchId, intendedRecipient, quantityToShip);
+    function approveTransfer(uint256 requestId) public onlyBatchOwner(requestId) validateRequestStatus(requestId) {
+        _approveTransfer(requestId);
     }
 
-    function rejectTransfer(uint256 requestId) public onlyBatchOwner(requestId) {}
-
-    function confirmTransfer(uint256 requestId) public onlyIntendedRecipient(requestId) returns (uint256, uint256) {
-        if (s_transferRequests[requestId].status == RequestStatus.Pending) {
-            revert NexTrack__TransferInitiationPending();
-        }
-        if(s_transferRequests[requestId].status == RequestStatus.Rejected) {
-            revert NexTrack__RequestAlreadyRejected();
-        }
-        if(s_transferRequests[requestId].status == RequestStatus.Completed) {
-            revert NexTrack__RequestAlreadyCompleted();
-        }
-
-        uint256 batchId = s_transferRequests[requestId].batchId;
-        return (requestId, _confirmTransfer(requestId, batchId));
+    function rejectTransfer(uint256 requestId) public onlyBatchOwner(requestId) validateRequestStatus(requestId) {
+        _rejectTransfer(requestId);
     }
 
-    /*//////////////////////////////////////////////////////////
-                        INTERNAL FUNCTIONS
-    //////////////////////////////////////////////////////////*/
+    function confirmTransfer(uint256 requestId) public onlyIntendedRecipient(requestId) validateStatusBeforeConfirm(requestId) returns (uint256, uint256) {
+        return (requestId, _confirmTransfer(requestId));
+    }
+
+    /*////////////////////////////////////////////////////
+                    INTERNAL FUNCTIONS
+    ////////////////////////////////////////////////////*/
 
     function _registerProductBatch(
         string memory name,
@@ -273,60 +273,52 @@ contract NexTrack is Ownable {
         Category category,
         uint256 totalQuantity
     ) internal {
-        uint256 id = _generateProductId(name, category, totalQuantity, DEFAULT_BATCH_ID);
+        uint256 batchId = _generateProductId(name, category, totalQuantity, DEFAULT_BATCH_ID);
 
         ProductBatch memory newProductBatch = ProductBatch({
-            id: id,
+            batchId: batchId,
             name: name,
             description: description,
             category: category,
             owner: msg.sender,
-            status: ProductStatus.Manufactured,
-            intendedRecipient: address(0),
             totalQuantity: totalQuantity,
-            quantityToShip: DEFAULT_QUANTITY_TO_SHIP,
             parentBatch: DEFAULT_BATCH_ID,
             timestamp: block.timestamp
         });
 
-        s_batches[id] = newProductBatch;
-        s_currentInventory[msg.sender].push(id);
+        s_batches[batchId] = newProductBatch;
+        s_currentInventory[msg.sender].push(batchId);
 
         emit ProductBatchRegistered(
-            id,
-            name,
-            description,
-            category,
-            msg.sender,
-            ProductStatus.Manufactured,
-            address(0),
-            totalQuantity,
-            DEFAULT_QUANTITY_TO_SHIP,
-            DEFAULT_BATCH_ID,
-            block.timestamp
+            batchId, name, description, category, msg.sender, totalQuantity, DEFAULT_BATCH_ID, block.timestamp
         );
     }
 
     function _generateProductId(string memory name, Category category, uint256 totalQuantity, uint256 parentBatchId)
         internal
-        view
+        view 
         returns (uint256)
     {
         // Generate a unique product ID based on the product details and timestamp
-        uint64 id = uint64(
+        uint64 batchId = uint64(
             bytes8(
                 keccak256(abi.encodePacked(name, category, totalQuantity, parentBatchId, msg.sender, block.timestamp))
             )
         );
-        return id;
+        return batchId;
+    }
+
+    function _generateRequestId(uint256 batchId, address seller, uint256 quantityRequested) internal view returns (uint256) {
+        return uint64(bytes8(keccak256(abi.encodePacked(batchId, seller, quantityRequested, block.timestamp))));
     }
 
     function _requestProductBatch(uint256 batchId, address seller, uint256 quantityRequested)
         internal
         returns (uint256 requestId)
     {
+        requestId = _generateRequestId(batchId, seller, quantityRequested);
         TransferRequest memory transferRequest = TransferRequest({
-            requestId: uint64(bytes8(keccak256(abi.encodePacked(batchId, seller, quantityRequested, block.timestamp)))),
+            requestId: requestId,
             batchId: batchId,
             seller: seller,
             buyer: msg.sender,
@@ -352,56 +344,55 @@ contract NexTrack is Ownable {
         return transferRequest.requestId;
     }
 
-    function _initiateTransfer(uint256 requestId, uint256 batchId, address intendedRecipient, uint256 quantityToShip) internal {
-        ProductBatch storage batch = s_batches[batchId];
-        s_transferRequests[requestId].status = RequestStatus.Approved;
-        s_transferRequests[requestId].timestamp = block.timestamp;
-
-        batch.status = ProductStatus.InTransit;
-        batch.intendedRecipient = intendedRecipient;
+    function _approveTransfer(uint256 requestId) internal {
+        TransferRequest storage request = s_transferRequests[requestId];
+        ProductBatch storage batch = s_batches[request.batchId];
+        request.status = RequestStatus.Approved;
+        request.timestamp = block.timestamp;
         batch.timestamp = block.timestamp;
-        batch.quantityToShip = quantityToShip;
 
-        emit TransferInitiated(requestId, batchId, intendedRecipient, quantityToShip, block.timestamp);
+        emit TransferApproved(requestId, request.batchId, request.buyer, request.quantityRequested, block.timestamp);
     }
 
-    function _confirmTransfer(uint256 requestId, uint256 batchId) internal returns (uint256) {
+    function _rejectTransfer(uint256 requestId) internal {
+        TransferRequest storage request = s_transferRequests[requestId];
+        request.status = RequestStatus.Rejected;
+        request.timestamp = block.timestamp;
+
+        emit TransferRejected(requestId, request.batchId, request.buyer, request.quantityRequested, block.timestamp);
+    }
+
+    function _confirmTransfer(uint256 requestId) internal returns (uint256) {
+        TransferRequest storage request = s_transferRequests[requestId];
+        uint256 batchId = request.batchId;
         ProductBatch storage oldBatch = s_batches[batchId];
-        uint256 quantityReceived = oldBatch.quantityToShip;
+        uint256 quantityReceived = request.quantityRequested;
 
         // Update parent batch
-        oldBatch.status = ProductStatus.Manufactured;
-        oldBatch.intendedRecipient = address(0);
         oldBatch.timestamp = block.timestamp;
         oldBatch.totalQuantity -= quantityReceived;
-        oldBatch.quantityToShip = 0;
 
-        s_transferRequests[requestId].status = RequestStatus.Completed;
-        s_transferRequests[requestId].timestamp = block.timestamp;
+        request.status = RequestStatus.Completed;
+        request.timestamp = block.timestamp;
 
         uint256 newBatchId = _generateProductId(oldBatch.name, oldBatch.category, quantityReceived, batchId);
 
         // Create new batch
         // Directly store new batch
         s_batches[newBatchId] = ProductBatch({
-            id: newBatchId,
+            batchId: newBatchId,
             name: oldBatch.name,
             description: oldBatch.description,
             category: oldBatch.category,
             owner: msg.sender,
-            status: ProductStatus.InWarehouse,
-            intendedRecipient: address(0),
             totalQuantity: quantityReceived,
-            quantityToShip: 0,
             parentBatch: batchId,
             timestamp: block.timestamp
         });
-
         s_currentInventory[msg.sender].push(newBatchId);
 
         // Emit events
-        emit RequestCompleted(requestId, msg.sender, block.timestamp); 
-
+        emit RequestCompleted(requestId, msg.sender, block.timestamp);
         emit ReceivedAndCreatedBatch(
             requestId,
             newBatchId,
@@ -409,10 +400,7 @@ contract NexTrack is Ownable {
             oldBatch.description,
             oldBatch.category,
             msg.sender,
-            ProductStatus.InWarehouse,
-            address(0),
             quantityReceived,
-            DEFAULT_QUANTITY_TO_SHIP,
             batchId,
             block.timestamp
         );
@@ -428,8 +416,8 @@ contract NexTrack is Ownable {
         return s_currentInventory[owner];
     }
 
-    function getBatchDetails(uint256 id) public view returns (ProductBatch memory) {
-        return s_batches[id];
+    function getBatchDetails(uint256 batchId) public view returns (ProductBatch memory) {
+        return s_batches[batchId];
     }
 
     function getTransferRequestDetails(uint256 requestId) public view returns (TransferRequest memory) {

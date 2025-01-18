@@ -227,21 +227,36 @@ contract NexTrackTest is Test {
         nexTrack.rejectTransfer(requestId);
     }
 
-    function testRejectTransferRevertsIfRequestAlreadyApproved() public productRegistered productRequested transferApproved {
+    function testRejectTransferRevertsIfRequestAlreadyApproved()
+        public
+        productRegistered
+        productRequested
+        transferApproved
+    {
         uint256 requestId = nexTrack.getSellerTransferRequests(REGISTERED_MANUFACTURER)[0];
         vm.expectRevert(NexTrack.NexTrack__RequestAlreadyApproved.selector);
         vm.prank(REGISTERED_MANUFACTURER);
         nexTrack.rejectTransfer(requestId);
     }
 
-    function testRejectTransferRevertsIfRequestAlreadyRejected() public productRegistered productRequested transferRejected {
+    function testRejectTransferRevertsIfRequestAlreadyRejected()
+        public
+        productRegistered
+        productRequested
+        transferRejected
+    {
         uint256 requestId = nexTrack.getSellerTransferRequests(REGISTERED_MANUFACTURER)[0];
         vm.expectRevert(NexTrack.NexTrack__RequestAlreadyRejected.selector);
         vm.prank(REGISTERED_MANUFACTURER);
         nexTrack.rejectTransfer(requestId);
     }
 
-    function testRejectTransferRevertsIfRequestAlreadyCompleted() public productRegistered productRequested transferApproved {
+    function testRejectTransferRevertsIfRequestAlreadyCompleted()
+        public
+        productRegistered
+        productRequested
+        transferApproved
+    {
         uint256 requestId = nexTrack.getSellerTransferRequests(REGISTERED_MANUFACTURER)[0];
         vm.prank(USER);
         nexTrack.confirmTransfer(requestId);

@@ -144,19 +144,11 @@ contract NexTrack is Ownable {
     );
 
     event TransferApproved(
-        uint256 indexed requestId,
-        uint256 indexed batchId,
-        address indexed buyer,
-        uint256 quantity,
-        uint256 timestamp
+        uint256 indexed requestId, uint256 indexed batchId, address indexed buyer, uint256 quantity, uint256 timestamp
     );
 
     event TransferRejected(
-        uint256 indexed requestId,
-        uint256 indexed batchId,
-        address indexed buyer,
-        uint256 quantity,
-        uint256 timestamp
+        uint256 indexed requestId, uint256 indexed batchId, address indexed buyer, uint256 quantity, uint256 timestamp
     );
 
     /*//////////////////////////////////////////////////////////
@@ -223,6 +215,11 @@ contract NexTrack is Ownable {
         }
     }
 
+    function registerManufacturer(address manufacturer) public onlyOwner {
+        s_registeredManufacturers[manufacturer] = true;
+        s_manufacturers.push(manufacturer);
+    }
+
     function registerProductBatch(
         string memory name,
         string memory description,
@@ -259,7 +256,12 @@ contract NexTrack is Ownable {
         _rejectTransfer(requestId);
     }
 
-    function confirmTransfer(uint256 requestId) public onlyIntendedRecipient(requestId) validateStatusBeforeConfirm(requestId) returns (uint256, uint256) {
+    function confirmTransfer(uint256 requestId)
+        public
+        onlyIntendedRecipient(requestId)
+        validateStatusBeforeConfirm(requestId)
+        returns (uint256, uint256)
+    {
         return (requestId, _confirmTransfer(requestId));
     }
 
@@ -296,7 +298,7 @@ contract NexTrack is Ownable {
 
     function _generateProductId(string memory name, Category category, uint256 totalQuantity, uint256 parentBatchId)
         internal
-        view 
+        view
         returns (uint256)
     {
         // Generate a unique product ID based on the product details and timestamp
@@ -308,7 +310,11 @@ contract NexTrack is Ownable {
         return batchId;
     }
 
-    function _generateRequestId(uint256 batchId, address seller, uint256 quantityRequested) internal view returns (uint256) {
+    function _generateRequestId(uint256 batchId, address seller, uint256 quantityRequested)
+        internal
+        view
+        returns (uint256)
+    {
         return uint64(bytes8(keccak256(abi.encodePacked(batchId, seller, quantityRequested, block.timestamp))));
     }
 

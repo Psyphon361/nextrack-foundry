@@ -4,17 +4,22 @@ pragma solidity ^0.8.24;
 import {Test, console2} from "forge-std/Test.sol";
 import {DeployNexTrack} from "../script/DeployNexTrack.s.sol";
 import {NexTrack} from "../src/NexTrack.sol";
+import {MyGovernor} from "../src/MyGovernor.sol";
+import {GovToken} from "../src/GovToken.sol";
 
 contract NexTrackTest is Test {
     DeployNexTrack public deployer;
     NexTrack public nexTrack;
+    MyGovernor public governor;
+    GovToken public govToken;
 
     address public USER = makeAddr("user");
     address public RANDOM_USER = makeAddr("random_user");
     address public REGISTERED_MANUFACTURER = address(1);
+    address public SECOND_REGISTERED_MANUFACTURER = address(2);
 
     string public name = "Earphones";
-    string public description = "High quality earphones";
+    string public productDescription = "High quality earphones";
     NexTrack.Category public category = NexTrack.Category.Electronics;
     uint256 public TOTAL_QUANTITY = 100;
     uint256 public QUANTITY_TO_SHIP = 30;
@@ -22,13 +27,27 @@ contract NexTrackTest is Test {
     uint256 public constant DEFAULT_BATCH_ID = 0;
     uint256 public constant DEFAULT_QUANTITY_TO_SHIP = 0;
 
+    uint256 public constant MIN_DELAY = 3600; // 1hr - after a vote passes
+    uint256 public constant VOTING_DELAY = 17280; // number of blocks till a vote is active - 1 day in this case for 5 second block times
+    uint256 public constant VOTING_PERIOD = 120960; // number of weeks the vote is open - 7 days
+
+    uint256[] values;
+    bytes[] calldatas;
+    address[] targets;
+
     ///////////////////////
     /// SetUp Function ////
     ///////////////////////
 
     function setUp() public {
         deployer = new DeployNexTrack();
-        nexTrack = deployer.run();
+        (nexTrack, governor, govToken) = deployer.run();
+
+        // delegate voting power
+        vm.prank(REGISTERED_MANUFACTURER);
+        govToken.delegate(REGISTERED_MANUFACTURER);
+        vm.prank(SECOND_REGISTERED_MANUFACTURER);
+        govToken.delegate(SECOND_REGISTERED_MANUFACTURER);
     }
 
     ///////////////////////
@@ -52,18 +71,18 @@ contract NexTrackTest is Test {
     function testRevertsIfNotRegisteredManufacturer() public {
         vm.expectRevert(NexTrack.NexTrack__NotRegisteredManufacturer.selector);
         vm.prank(USER);
-        nexTrack.registerProductBatch(name, description, category, TOTAL_QUANTITY);
+        nexTrack.registerProductBatch(name, productDescription, category, TOTAL_QUANTITY);
     }
 
     function testRegisterProduct() public {
         vm.prank(REGISTERED_MANUFACTURER);
-        nexTrack.registerProductBatch(name, description, category, TOTAL_QUANTITY);
+        nexTrack.registerProductBatch(name, productDescription, category, TOTAL_QUANTITY);
 
         uint256 batchId = nexTrack.getCurrentInventory(REGISTERED_MANUFACTURER)[0];
         NexTrack.ProductBatch memory productBatch = nexTrack.getBatchDetails(batchId);
 
         assertEq(productBatch.name, name);
-        assertEq(productBatch.description, description);
+        assertEq(productBatch.description, productDescription);
         assertEq(uint8(productBatch.category), uint8(category));
         assertEq(productBatch.owner, REGISTERED_MANUFACTURER);
     }
@@ -81,7 +100,7 @@ contract NexTrackTest is Test {
                 )
             ),
             name,
-            description,
+            productDescription,
             category,
             REGISTERED_MANUFACTURER,
             TOTAL_QUANTITY,
@@ -89,7 +108,7 @@ contract NexTrackTest is Test {
             block.timestamp
         );
         vm.prank(REGISTERED_MANUFACTURER);
-        nexTrack.registerProductBatch(name, description, category, TOTAL_QUANTITY);
+        nexTrack.registerProductBatch(name, productDescription, category, TOTAL_QUANTITY);
     }
 
     ////////////////////////////
@@ -98,7 +117,7 @@ contract NexTrackTest is Test {
 
     modifier productRegistered() {
         vm.prank(REGISTERED_MANUFACTURER);
-        nexTrack.registerProductBatch(name, description, category, TOTAL_QUANTITY);
+        nexTrack.registerProductBatch(name, productDescription, category, TOTAL_QUANTITY);
         _;
     }
 
@@ -363,7 +382,7 @@ contract NexTrackTest is Test {
                 )
             ),
             name,
-            description,
+            productDescription,
             category,
             USER,
             QUANTITY_TO_SHIP,
@@ -372,5 +391,71 @@ contract NexTrackTest is Test {
         );
         vm.prank(USER);
         nexTrack.confirmTransfer(requestId);
+    }
+
+    /*//////////////////////////////
+            Governance Tests
+    //////////////////////////////*/
+
+    function testCannotOnboardManufacturerWithoutGovernance() public {
+        vm.expectRevert();
+        nexTrack.onboardNewManufacturer(USER);
+    }
+
+    function testGovernanceOnboardsNewManufacturer() public {
+        address newManufacturer = address(11);
+        string memory description = "Onboard new manufacturer to the system";
+        bytes memory encodedFunctionCall = abi.encodeWithSignature("onboardNewManufacturer(address)", newManufacturer);
+        values.push(0);
+        calldatas.push(encodedFunctionCall);
+        targets.push(address(nexTrack));
+
+        console2.log("Governance token supply before proposal: ", govToken.totalSupply());
+
+        // 1. Propose to DAO
+        uint256 proposalId = governor.propose(targets, values, calldatas, description);
+
+        // View the proposal state
+        console2.log("Proposal state before voting delay: ", uint256(governor.state(proposalId)));
+
+        vm.warp(block.timestamp + VOTING_DELAY + 1);
+        vm.roll(block.number + VOTING_DELAY + 1);
+
+        console2.log("Proposal state after voting delay: ", uint256(governor.state(proposalId)));
+
+        // 2. Vote on the proposal
+        string memory reason = "cuz this manufacturer is cool";
+        uint8 voteWay = 1; // voting yes (in favor of proposal)
+
+        // first vote
+        vm.prank(REGISTERED_MANUFACTURER);
+        governor.castVoteWithReason(proposalId, voteWay, reason);
+
+        // second vote
+        vm.prank(SECOND_REGISTERED_MANUFACTURER);
+        governor.castVoteWithReason(proposalId, voteWay, reason);
+
+        vm.warp(block.timestamp + VOTING_PERIOD + 1);
+        vm.roll(block.number + VOTING_PERIOD + 1);
+        
+        console2.log("Proposal state after voting: ", uint256(governor.state(proposalId)));
+
+        // 3. Queue the TX
+        bytes32 descriptionHash = keccak256(bytes(description));
+        governor.queue(targets, values, calldatas, descriptionHash);
+
+        vm.warp(block.timestamp + MIN_DELAY + 1);
+        vm.roll(block.number + MIN_DELAY + 1);
+
+        console2.log("Governance token supply before: ", govToken.totalSupply());
+
+        // 4. Execute
+        governor.execute(targets, values, calldatas, descriptionHash);  
+
+        address[] memory registeredManufacturers = nexTrack.getRegisteredManufacturers();
+        console2.log("Governance token supply after execution: ", govToken.totalSupply());
+
+        assertEq(govToken.totalSupply(), nexTrack.getRegisteredManufacturers().length);
+        assertEq(newManufacturer, registeredManufacturers[10]);
     }
 }

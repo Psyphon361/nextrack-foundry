@@ -25,6 +25,8 @@ pragma solidity ^0.8.24;
 
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 
+import {GovToken} from "./GovToken.sol";
+
 contract NexTrack is Ownable {
     /*//////////////////////////////////////////////////////////
                         ERRORS
@@ -91,15 +93,16 @@ contract NexTrack is Ownable {
                         STATE VARIABLES
     //////////////////////////////////////////////////////////*/
 
-    mapping(uint256 => ProductBatch) public s_batches; // Maps batch IDs to their details
-    mapping(address => uint256[]) public s_currentInventory; // Tracks current inventory, maps address to a list of batch IDs
-    mapping(address => bool) public s_registeredManufacturers; // Maps manufacturers to a boolean value indicating if they are registered
+    mapping(uint256 => ProductBatch) private s_batches; // Maps batch IDs to their details
+    mapping(address => uint256[]) private s_currentInventory; // Tracks current inventory, maps address to a list of batch IDs
+    mapping(address => bool) private s_registeredManufacturers; // Maps manufacturers to a boolean value indicating if they are registered
 
-    mapping(uint256 => TransferRequest) public s_transferRequests;
-    mapping(address => uint256[]) public s_sellerTransferRequests; // Maps sellers to a list of transfer request IDs raised by buyers
-    mapping(address => uint256[]) public s_buyerTransferRequests; // Maps buyers to a list of transfer request IDs raised by them
+    mapping(uint256 => TransferRequest) private s_transferRequests;
+    mapping(address => uint256[]) private s_sellerTransferRequests; // Maps sellers to a list of transfer request IDs raised by buyers
+    mapping(address => uint256[]) private s_buyerTransferRequests; // Maps buyers to a list of transfer request IDs raised by them
 
-    address[] public s_manufacturers;
+    address[] private s_manufacturers;
+    GovToken private s_govToken;
 
     uint256 public constant DEFAULT_BATCH_ID = 0;
     uint256 public constant DEFAULT_QUANTITY_TO_SHIP = 0;
@@ -107,6 +110,8 @@ contract NexTrack is Ownable {
     /*//////////////////////////////////////////////////////////
                         EVENTS
     //////////////////////////////////////////////////////////*/
+
+    event NewManufacturerOnboarded(address manufacturer);
 
     event ProductBatchRegistered(
         uint256 indexed batchId,
@@ -208,16 +213,21 @@ contract NexTrack is Ownable {
                         FUNCTIONS
     //////////////////////////////////////////////////////////*/
 
-    constructor(address[] memory manufacturers) Ownable(msg.sender) {
+    constructor(address[] memory manufacturers, GovToken govToken) Ownable(msg.sender) {
+        s_govToken = govToken;
+
         for (uint256 i = 0; i < manufacturers.length; i++) {
             s_registeredManufacturers[manufacturers[i]] = true;
             s_manufacturers.push(manufacturers[i]);
+            s_govToken.delegate(manufacturers[i]);
         }
     }
 
-    function registerManufacturer(address manufacturer) public onlyOwner {
+    function onboardNewManufacturer(address manufacturer) public onlyOwner {
         s_registeredManufacturers[manufacturer] = true;
         s_manufacturers.push(manufacturer);
+        s_govToken.mint(manufacturer, 1);
+        emit NewManufacturerOnboarded(manufacturer);
     }
 
     function registerProductBatch(
@@ -440,5 +450,9 @@ contract NexTrack is Ownable {
 
     function getManufacturerCount() public view returns (uint256) {
         return s_manufacturers.length;
+    }
+
+    function getRegisteredManufacturers() public view returns (address[] memory) {
+        return s_manufacturers;
     }
 }

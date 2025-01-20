@@ -1,11 +1,27 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import {Script} from "forge-std/Script.sol";
+import {Script, console} from "forge-std/Script.sol";
 import {NexTrack} from "../src/NexTrack.sol";
+import {GovToken} from "../src/GovToken.sol";
+import {MyGovernor} from "../src/MyGovernor.sol";
+import {TimeLock} from "../src/TimeLock.sol";
+
 
 contract DeployNexTrack is Script {
     NexTrack public nexTrack;
+    GovToken public govToken;
+    MyGovernor public governor;
+    TimeLock public timelock;
+    
+    address public USER = makeAddr("user");
+    address[] proposers;
+    address[] executors;
+
+    uint256 public constant MIN_DELAY = 3600; // 1hr - after a vote passes
+    uint256 public constant VOTING_DELAY = 1; // how many blocks till a vote is active
+    uint256 public constant VOTING_PERIOD = 50400;
+
     address[] public registeredManufacturers = [
         address(1),
         address(2),
@@ -19,14 +35,46 @@ contract DeployNexTrack is Script {
         address(10)
     ];
 
-    function run() external returns (NexTrack) {
+    function run() external returns (NexTrack, MyGovernor, GovToken) {
         return deployNexTrack();
     }
 
-    function deployNexTrack() public returns (NexTrack) {
+    function deployNexTrack() public returns (NexTrack, MyGovernor, GovToken) {
         vm.startBroadcast();
-        nexTrack = new NexTrack(registeredManufacturers);
+
+        // deploy governance token contract
+        govToken = new GovToken();
+        for (uint256 i = 0; i < registeredManufacturers.length; i++) {
+            govToken.mint(registeredManufacturers[i], 1);
+        }
+        console.log("Governance token deployed at:", address(govToken));
+
+        // deploy timelock contract
+        timelock = new TimeLock(MIN_DELAY, proposers, executors);
+        console.log("Timelock deployed at:", address(timelock));
+
+        // deploy governor contract
+        governor = new MyGovernor(govToken, timelock);
+        console.log("Governor deployed at:", address(governor));
+
+        bytes32 proposerRole = timelock.PROPOSER_ROLE();
+        bytes32 executorRole = timelock.EXECUTOR_ROLE();
+
+        // set roles
+        timelock.grantRole(proposerRole, address(governor));
+        timelock.grantRole(executorRole, address(0));
+
+        // deploy nexTrack contract
+        nexTrack = new NexTrack(registeredManufacturers, govToken);
+        console.log("NexTrack deployed at:", address(nexTrack));
+
+        console.log("NexTrack owner before:", nexTrack.owner());
+
+        nexTrack.transferOwnership(address(timelock));
+
+        console.log("NexTrack owner after:", nexTrack.owner());
+
         vm.stopBroadcast();
-        return nexTrack;
+        return (nexTrack, governor, govToken);
     }
 }

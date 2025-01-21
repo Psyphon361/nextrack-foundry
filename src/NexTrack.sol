@@ -219,7 +219,6 @@ contract NexTrack is Ownable {
         for (uint256 i = 0; i < manufacturers.length; i++) {
             s_registeredManufacturers[manufacturers[i]] = true;
             s_manufacturers.push(manufacturers[i]);
-            s_govToken.delegate(manufacturers[i]);
         }
     }
 

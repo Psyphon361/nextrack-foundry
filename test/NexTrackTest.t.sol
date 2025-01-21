@@ -55,13 +55,13 @@ contract NexTrackTest is Test {
     ///////////////////////
 
     function testContractDeployment() public view {
-        console2.log("NexTrack Address: ", address(nexTrack));
+        // console2.log("NexTrack Address: ", address(nexTrack));
         assert(address(nexTrack) != address(0));
 
         uint256 manufacturerCount = nexTrack.getManufacturerCount();
-        console2.log("Manufacturer Count: ", manufacturerCount);
+        // console2.log("Manufacturer Count: ", manufacturerCount);
 
-        assertEq(manufacturerCount, 10);
+        assertEq(manufacturerCount, 5);
     }
 
     ////////////////////////////
@@ -456,6 +456,31 @@ contract NexTrackTest is Test {
         console2.log("Governance token supply after execution: ", govToken.totalSupply());
 
         assertEq(govToken.totalSupply(), nexTrack.getRegisteredManufacturers().length);
-        assertEq(newManufacturer, registeredManufacturers[10]);
+        assertEq(newManufacturer, registeredManufacturers[registeredManufacturers.length - 1]);
+    }
+
+    function testQueueFunctionRevertsIfVoteNotPassed() public {
+        address newManufacturer = address(11);
+        string memory description = "Onboard new manufacturer to the system";
+        bytes memory encodedFunctionCall = abi.encodeWithSignature("onboardNewManufacturer(address)", newManufacturer);
+        values.push(0);
+        calldatas.push(encodedFunctionCall);
+        targets.push(address(nexTrack));
+        // 1. Propose to DAO
+        uint256 proposalId = governor.propose(targets, values, calldatas, description);
+        vm.warp(block.timestamp + VOTING_DELAY + 1);
+        vm.roll(block.number + VOTING_DELAY + 1);
+        // 2. Vote on the proposal
+        string memory reason = "cuz this manufacturer is cool";
+        uint8 voteWay = 1; // voting yes (in favor of proposal)
+        // only one vote
+        vm.prank(REGISTERED_MANUFACTURER);
+        governor.castVoteWithReason(proposalId, voteWay, reason);
+        vm.warp(block.timestamp + VOTING_PERIOD + 1);
+        vm.roll(block.number + VOTING_PERIOD + 1);
+        // 3. Queue the TX
+        bytes32 descriptionHash = keccak256(bytes(description));
+        vm.expectRevert();
+        governor.queue(targets, values, calldatas, descriptionHash); 
     }
 }

@@ -27,12 +27,7 @@ contract DeployNexTrack is Script {
         address(2),
         address(3),
         address(4),
-        address(5),
-        address(6),
-        address(7),
-        address(8),
-        address(9),
-        address(10)
+        address(5)
     ];
 
     function run() external returns (NexTrack, MyGovernor, GovToken) {

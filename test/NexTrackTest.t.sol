@@ -4,25 +4,31 @@ pragma solidity ^0.8.24;
 import {Test, console2} from "forge-std/Test.sol";
 import {DeployNexTrack} from "../script/DeployNexTrack.s.sol";
 import {NexTrack} from "../src/NexTrack.sol";
-import {MyGovernor} from "../src/MyGovernor.sol";
-import {GovToken} from "../src/GovToken.sol";
+import {MyGovernor} from "../src/governance/MyGovernor.sol";
+import {GovToken} from "../src/governance/GovToken.sol";
+import {Vault} from "../src/Vault.sol";
+import {USDTMock} from "../src/USDTMock.sol";
 
 contract NexTrackTest is Test {
     DeployNexTrack public deployer;
     NexTrack public nexTrack;
     MyGovernor public governor;
     GovToken public govToken;
+    Vault public vault;
+    USDTMock public usdt;
 
     address public USER = makeAddr("user");
     address public RANDOM_USER = makeAddr("random_user");
     address public REGISTERED_MANUFACTURER = address(1);
     address public SECOND_REGISTERED_MANUFACTURER = address(2);
+    address USDTOwner = makeAddr("usdtowner");
 
     string public name = "Earphones";
     string public productDescription = "High quality earphones";
     NexTrack.Category public category = NexTrack.Category.Electronics;
     uint256 public TOTAL_QUANTITY = 100;
     uint256 public QUANTITY_TO_SHIP = 30;
+    uint256 public UNIT_PRICE = 2;
 
     uint256 public constant DEFAULT_BATCH_ID = 0;
     uint256 public constant DEFAULT_QUANTITY_TO_SHIP = 0;
@@ -41,7 +47,14 @@ contract NexTrackTest is Test {
 
     function setUp() public {
         deployer = new DeployNexTrack();
-        (nexTrack, governor, govToken) = deployer.run();
+        (nexTrack, governor, govToken, vault, usdt) = deployer.run();
+        console2.log("NexTrack Address: ", address(nexTrack));
+
+        // mint and approve USDT spend for USER
+        vm.prank(address(USDTOwner));
+        usdt.mint(USER, 1e18);
+        vm.prank(USER);
+        usdt.approve(address(vault), 1e18);
 
         // delegate voting power
         vm.prank(REGISTERED_MANUFACTURER);
@@ -71,12 +84,12 @@ contract NexTrackTest is Test {
     function testRevertsIfNotRegisteredManufacturer() public {
         vm.expectRevert(NexTrack.NexTrack__NotRegisteredManufacturer.selector);
         vm.prank(USER);
-        nexTrack.registerProductBatch(name, productDescription, category, TOTAL_QUANTITY);
+        nexTrack.registerProductBatch(name, productDescription, category, TOTAL_QUANTITY, UNIT_PRICE);
     }
 
     function testRegisterProduct() public {
         vm.prank(REGISTERED_MANUFACTURER);
-        nexTrack.registerProductBatch(name, productDescription, category, TOTAL_QUANTITY);
+        nexTrack.registerProductBatch(name, productDescription, category, TOTAL_QUANTITY, UNIT_PRICE);
 
         uint256 batchId = nexTrack.getCurrentInventory(REGISTERED_MANUFACTURER)[0];
         NexTrack.ProductBatch memory productBatch = nexTrack.getBatchDetails(batchId);
@@ -104,11 +117,12 @@ contract NexTrackTest is Test {
             category,
             REGISTERED_MANUFACTURER,
             TOTAL_QUANTITY,
+            UNIT_PRICE,
             DEFAULT_BATCH_ID,
             block.timestamp
         );
         vm.prank(REGISTERED_MANUFACTURER);
-        nexTrack.registerProductBatch(name, productDescription, category, TOTAL_QUANTITY);
+        nexTrack.registerProductBatch(name, productDescription, category, TOTAL_QUANTITY, UNIT_PRICE);
     }
 
     ////////////////////////////
@@ -117,7 +131,7 @@ contract NexTrackTest is Test {
 
     modifier productRegistered() {
         vm.prank(REGISTERED_MANUFACTURER);
-        nexTrack.registerProductBatch(name, productDescription, category, TOTAL_QUANTITY);
+        nexTrack.registerProductBatch(name, productDescription, category, TOTAL_QUANTITY, UNIT_PRICE);
         _;
     }
 
@@ -147,7 +161,7 @@ contract NexTrackTest is Test {
     function testEmitsEventOnProductRequest() public productRegistered {
         uint256 batchId = nexTrack.getCurrentInventory(REGISTERED_MANUFACTURER)[0];
         vm.expectEmit(true, true, true, true, address(nexTrack));
-        emit NexTrack.TransferRequested(
+        emit NexTrack.ProductBatchRequested(
             uint64(
                 bytes8(keccak256(abi.encodePacked(batchId, REGISTERED_MANUFACTURER, QUANTITY_TO_SHIP, block.timestamp)))
             ),
@@ -155,6 +169,7 @@ contract NexTrackTest is Test {
             REGISTERED_MANUFACTURER,
             USER,
             QUANTITY_TO_SHIP,
+            UNIT_PRICE * QUANTITY_TO_SHIP,
             NexTrack.RequestStatus.Pending,
             block.timestamp
         );
@@ -386,6 +401,7 @@ contract NexTrackTest is Test {
             category,
             USER,
             QUANTITY_TO_SHIP,
+            UNIT_PRICE,
             parentBatchId,
             block.timestamp
         );
@@ -403,7 +419,7 @@ contract NexTrackTest is Test {
     }
 
     function testGovernanceOnboardsNewManufacturer() public {
-        address newManufacturer = address(11);
+        address newManufacturer = address(6);
         string memory description = "Onboard new manufacturer to the system";
         bytes memory encodedFunctionCall = abi.encodeWithSignature("onboardNewManufacturer(address)", newManufacturer);
         values.push(0);
@@ -437,7 +453,7 @@ contract NexTrackTest is Test {
 
         vm.warp(block.timestamp + VOTING_PERIOD + 1);
         vm.roll(block.number + VOTING_PERIOD + 1);
-        
+
         console2.log("Proposal state after voting: ", uint256(governor.state(proposalId)));
 
         // 3. Queue the TX
@@ -449,11 +465,19 @@ contract NexTrackTest is Test {
 
         console2.log("Governance token supply before: ", govToken.totalSupply());
 
+        address[] memory registeredManufacturers1 = nexTrack.getRegisteredManufacturers();
+        for(uint256 i = 0; i < registeredManufacturers1.length; i++) {   
+            console2.log("Registered manufacturer ", i, ":", registeredManufacturers1[i]);
+        }
         // 4. Execute
-        governor.execute(targets, values, calldatas, descriptionHash);  
+        governor.execute(targets, values, calldatas, descriptionHash);
 
         address[] memory registeredManufacturers = nexTrack.getRegisteredManufacturers();
         console2.log("Governance token supply after execution: ", govToken.totalSupply());
+
+        for(uint256 i = 0; i < registeredManufacturers.length; i++) {
+            console2.log("Registered manufacturer ", i, ":", registeredManufacturers[i]);
+        }
 
         assertEq(govToken.totalSupply(), nexTrack.getRegisteredManufacturers().length);
         assertEq(newManufacturer, registeredManufacturers[registeredManufacturers.length - 1]);
@@ -481,6 +505,53 @@ contract NexTrackTest is Test {
         // 3. Queue the TX
         bytes32 descriptionHash = keccak256(bytes(description));
         vm.expectRevert();
-        governor.queue(targets, values, calldatas, descriptionHash); 
+        governor.queue(targets, values, calldatas, descriptionHash);
+    }
+
+    /*//////////////////////////////
+            Vault Tests
+    //////////////////////////////*/
+
+    function testUSDTDepositOnNewRequest() public productRegistered productRequested {
+        uint256 vaultBalance = usdt.balanceOf(address(vault));
+        // console2.log("Vault balance: ", vaultBalance);
+        assertEq(vaultBalance, QUANTITY_TO_SHIP * UNIT_PRICE);
+    }
+
+    function testUSDTRefundOnRejectRequest() public productRegistered productRequested {
+        uint256 requestId = nexTrack.getSellerTransferRequests(REGISTERED_MANUFACTURER)[0];
+        uint256 vaultBalanceBefore = usdt.balanceOf(address(vault));
+        uint256 userBalanceBefore = usdt.balanceOf(USER);
+        assertEq(vaultBalanceBefore, QUANTITY_TO_SHIP * UNIT_PRICE);
+        vm.prank(REGISTERED_MANUFACTURER);
+        nexTrack.rejectTransfer(requestId);
+        uint256 vaultBalanceAfter = usdt.balanceOf(address(vault));
+        uint256 userBalanceAfter = usdt.balanceOf(USER);
+        assertEq(vaultBalanceAfter, 0);
+        assertEq(userBalanceAfter, userBalanceBefore + QUANTITY_TO_SHIP * UNIT_PRICE);
+    }
+
+    function testUSDTWithdrawOnConfirmRequest() public productRegistered productRequested transferApproved {
+        uint256 requestId = nexTrack.getSellerTransferRequests(REGISTERED_MANUFACTURER)[0];
+        uint256 vaultBalanceBefore = usdt.balanceOf(address(vault));
+        console2.log("Vault balance before confirm: ", vaultBalanceBefore);
+        vm.prank(USER);
+        nexTrack.confirmTransfer(requestId);
+        uint256 vaultBalanceAfter = usdt.balanceOf(address(vault));
+        assertEq(vaultBalanceAfter, 0);
+        uint256 userBalanceAfter = usdt.balanceOf(REGISTERED_MANUFACTURER);
+        assertEq(userBalanceAfter, vaultBalanceBefore);
+    }
+
+    function testRevertsIfTriesToDepositAgainForTheSameRequest() public productRegistered productRequested {
+        uint256 batchId = nexTrack.getCurrentInventory(REGISTERED_MANUFACTURER)[0];
+        vm.prank(USER);
+        vm.expectRevert(Vault.Vault__CannotDepositAgain.selector);
+        nexTrack.requestProductBatch(batchId, REGISTERED_MANUFACTURER, QUANTITY_TO_SHIP);
+    }
+
+    function testGetUsdtAddress() public view {
+        address usdtAddress = vault.getUsdtAddress();
+        assertEq(usdtAddress, address(usdt));
     }
 }

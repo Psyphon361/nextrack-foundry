@@ -21,7 +21,7 @@ contract NexTrackTest is Test {
     address public RANDOM_USER = makeAddr("random_user");
     address public REGISTERED_MANUFACTURER = address(1);
     address public SECOND_REGISTERED_MANUFACTURER = address(2);
-    address USDTOwner = makeAddr("usdtowner");
+    address public DEFAULT_ANVIL_ACCOUNT = 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266;
 
     string public name = "Earphones";
     string public productDescription = "High quality earphones";
@@ -29,6 +29,7 @@ contract NexTrackTest is Test {
     uint256 public TOTAL_QUANTITY = 100;
     uint256 public QUANTITY_TO_SHIP = 30;
     uint256 public UNIT_PRICE = 2;
+    uint256 public PRECISION = 1e18;
 
     uint256 public constant DEFAULT_BATCH_ID = 0;
     uint256 public constant DEFAULT_QUANTITY_TO_SHIP = 0;
@@ -51,7 +52,7 @@ contract NexTrackTest is Test {
         console2.log("NexTrack Address: ", address(nexTrack));
 
         // mint and approve USDT spend for USER
-        vm.prank(address(USDTOwner));
+        vm.prank(DEFAULT_ANVIL_ACCOUNT);
         usdt.mint(USER, 1e18);
         vm.prank(USER);
         usdt.approve(address(vault), 1e18);
@@ -61,6 +62,12 @@ contract NexTrackTest is Test {
         govToken.delegate(REGISTERED_MANUFACTURER);
         vm.prank(SECOND_REGISTERED_MANUFACTURER);
         govToken.delegate(SECOND_REGISTERED_MANUFACTURER);
+
+        // add initial set of manufacturers and transfer ownership of NexTrack to TimeLock
+        vm.startPrank(DEFAULT_ANVIL_ACCOUNT);
+        nexTrack.onboardInitialManufacturers();
+        nexTrack.transferOwnershipToTimelock();
+        vm.stopPrank();
     }
 
     ///////////////////////
@@ -466,7 +473,7 @@ contract NexTrackTest is Test {
         console2.log("Governance token supply before: ", govToken.totalSupply());
 
         address[] memory registeredManufacturers1 = nexTrack.getRegisteredManufacturers();
-        for(uint256 i = 0; i < registeredManufacturers1.length; i++) {   
+        for (uint256 i = 0; i < registeredManufacturers1.length; i++) {
             console2.log("Registered manufacturer ", i, ":", registeredManufacturers1[i]);
         }
         // 4. Execute
@@ -475,11 +482,11 @@ contract NexTrackTest is Test {
         address[] memory registeredManufacturers = nexTrack.getRegisteredManufacturers();
         console2.log("Governance token supply after execution: ", govToken.totalSupply());
 
-        for(uint256 i = 0; i < registeredManufacturers.length; i++) {
+        for (uint256 i = 0; i < registeredManufacturers.length; i++) {
             console2.log("Registered manufacturer ", i, ":", registeredManufacturers[i]);
         }
 
-        assertEq(govToken.totalSupply(), nexTrack.getRegisteredManufacturers().length);
+        assertEq(govToken.totalSupply() / PRECISION, nexTrack.getRegisteredManufacturers().length);
         assertEq(newManufacturer, registeredManufacturers[registeredManufacturers.length - 1]);
     }
 

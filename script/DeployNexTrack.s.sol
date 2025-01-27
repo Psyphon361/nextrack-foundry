@@ -8,6 +8,7 @@ import {MyGovernor} from "../src/governance/MyGovernor.sol";
 import {TimeLock} from "../src/governance/TimeLock.sol";
 import {Vault} from "../src/Vault.sol";
 import {USDTMock} from "../src/USDTMock.sol";
+import {HelperConfig} from "./HelperConfig.s.sol";
 
 contract DeployNexTrack is Script {
     NexTrack public nexTrack;
@@ -19,26 +20,36 @@ contract DeployNexTrack is Script {
 
     address[] proposers;
     address[] executors;
-    address USDTOwner = makeAddr("usdtowner");
 
     uint256 public constant MIN_DELAY = 3600; // 1hr - after a vote passes
     uint256 public constant VOTING_DELAY = 1; // how many blocks till a vote is active
     uint256 public constant VOTING_PERIOD = 50400;
+    uint256 public constant PRECISION = 1e18;
 
-    address[] public registeredManufacturers = [address(1), address(2), address(3), address(4), address(5)];
+    address[] public registeredManufacturers;
+    uint256 public deployerKey;
 
     function run() external returns (NexTrack, MyGovernor, GovToken, Vault, USDTMock) {
         return deployNexTrack();
     }
 
     function deployNexTrack() public returns (NexTrack, MyGovernor, GovToken, Vault, USDTMock) {
-        vm.startBroadcast();
+        HelperConfig config = new HelperConfig();
+        HelperConfig.NetworkConfig memory networkConfig = config.getActiveNetworkConfig();
+
+        registeredManufacturers = networkConfig.registeredManufacturers;
+        deployerKey = networkConfig.deployerKey;
+
+        vm.startBroadcast(deployerKey);
 
         // deploy governance token contract
         govToken = new GovToken();
-        for (uint256 i = 0; i < registeredManufacturers.length; i++) {
-            govToken.mint(registeredManufacturers[i], 1);
-        }
+        // for (uint256 i = 0; i < registeredManufacturers.length; i++) {
+        //     nonce++;
+        //     vm.setNonce(vm.addr(deployerKey), nonce);
+        //     govToken.mint(registeredManufacturers[i], 1 * PRECISION);
+        // }
+
         console.log("Governance token deployed at:", address(govToken));
 
         // deploy timelock contract
@@ -63,19 +74,17 @@ contract DeployNexTrack is Script {
         vault = new Vault(address(usdt));
 
         // deploy nexTrack contract
-        nexTrack = new NexTrack(registeredManufacturers, govToken, vault);
+        nexTrack = new NexTrack(registeredManufacturers, govToken, vault, timelock);
         console.log("NexTrack deployed at:", address(nexTrack));
-
         console.log("NexTrack owner before:", nexTrack.owner());
 
-        usdt.transferOwnership(USDTOwner);
         vault.transferOwnership(address(nexTrack));
-        nexTrack.transferOwnership(address(timelock));
+        // nexTrack.transferOwnership(address(timelock));
+
+        vm.stopBroadcast();
 
         console.log("NexTrack owner after:", nexTrack.owner());
         console.log("USDT Owner: ", usdt.owner());
-
-        vm.stopBroadcast();
         console.log("Deploy success!!!");
         return (nexTrack, governor, govToken, vault, usdt);
     }

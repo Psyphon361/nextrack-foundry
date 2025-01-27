@@ -26,6 +26,7 @@ pragma solidity ^0.8.24;
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 
 import {GovToken} from "./governance/GovToken.sol";
+import {TimeLock} from "./governance/TimeLock.sol";
 import {Vault} from "./Vault.sol";
 
 contract NexTrack is Ownable {
@@ -106,10 +107,12 @@ contract NexTrack is Ownable {
 
     address[] private s_manufacturers;
     GovToken private immutable s_govToken;
+    TimeLock private immutable s_timelock;
     Vault private immutable s_vault;
 
     uint256 public constant DEFAULT_BATCH_ID = 0;
     uint256 public constant DEFAULT_QUANTITY_TO_SHIP = 0;
+    uint256 public constant PRECISION = 1e18;
 
     /*//////////////////////////////////////////////////////////
                         EVENTS
@@ -220,20 +223,30 @@ contract NexTrack is Ownable {
                         FUNCTIONS
     //////////////////////////////////////////////////////////*/
 
-    constructor(address[] memory manufacturers, GovToken govToken, Vault vault) Ownable(msg.sender) {
+    constructor(address[] memory manufacturers, GovToken govToken, Vault vault, TimeLock timelock) Ownable(msg.sender) {
         s_govToken = govToken;
+        s_timelock = timelock;
         s_vault = vault;
+        s_manufacturers = manufacturers;
+    }
 
-        for (uint256 i = 0; i < manufacturers.length; i++) {
-            s_registeredManufacturers[manufacturers[i]] = true;
-            s_manufacturers.push(manufacturers[i]);
+    // CALL THESE TWO FUNCTIONS AFTER DEPLOYMENT TO INITIATE MANUFACTURERS AND TRANSFER OWNERSHIP TO THE TIMELOCK CONTRACT
+    
+    function onboardInitialManufacturers() public onlyOwner {
+        for (uint256 i = 0; i < s_manufacturers.length; i++) {
+            s_registeredManufacturers[s_manufacturers[i]] = true;
+            s_govToken.mint(s_manufacturers[i], 1 * PRECISION);
         }
+    }
+
+    function transferOwnershipToTimelock() public onlyOwner {
+        transferOwnership(address(s_timelock));
     }
 
     function onboardNewManufacturer(address manufacturer) public onlyOwner {
         s_registeredManufacturers[manufacturer] = true;
         s_manufacturers.push(manufacturer);
-        s_govToken.mint(manufacturer, 1);
+        s_govToken.mint(manufacturer, 1 * PRECISION);
         emit NewManufacturerOnboarded(manufacturer);
     }
 

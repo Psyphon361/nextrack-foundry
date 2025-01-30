@@ -228,19 +228,9 @@ contract NexTrack is Ownable {
         s_timelock = timelock;
         s_vault = vault;
         s_manufacturers = manufacturers;
-    }
-
-    // CALL THESE TWO FUNCTIONS AFTER DEPLOYMENT TO INITIATE MANUFACTURERS AND TRANSFER OWNERSHIP TO THE TIMELOCK CONTRACT
-    
-    function onboardInitialManufacturers() public onlyOwner {
         for (uint256 i = 0; i < s_manufacturers.length; i++) {
-            s_registeredManufacturers[s_manufacturers[i]] = true;
-            s_govToken.mint(s_manufacturers[i], 1 * PRECISION);
+            s_registeredManufacturers[manufacturers[i]] = true;
         }
-    }
-
-    function transferOwnershipToTimelock() public onlyOwner {
-        transferOwnership(address(s_timelock));
     }
 
     function onboardNewManufacturer(address manufacturer) public onlyOwner {

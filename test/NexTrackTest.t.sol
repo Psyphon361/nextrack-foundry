@@ -65,8 +65,6 @@ contract NexTrackTest is Test {
 
         // add initial set of manufacturers and transfer ownership of NexTrack to TimeLock
         vm.startPrank(DEFAULT_ANVIL_ACCOUNT);
-        nexTrack.onboardInitialManufacturers();
-        nexTrack.transferOwnershipToTimelock();
         vm.stopPrank();
     }
 

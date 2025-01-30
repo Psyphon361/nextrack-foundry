@@ -21,7 +21,7 @@ contract HelperConfig is Script {
     NetworkConfig private activeNetworkConfig;
 
     constructor() {
-        if (block.chainid == 5201420 || block.chainid == 52014 || block.chainid == 11155111) {
+        if (block.chainid == 5201420 || block.chainid == 52014 || block.chainid == 11155111 || block.chainid == 943) {
             activeNetworkConfig = getElectroneumConfig();
         } else {
             activeNetworkConfig = getOrCreateAnvilEthConfig();

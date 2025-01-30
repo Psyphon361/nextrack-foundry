@@ -44,11 +44,9 @@ contract DeployNexTrack is Script {
 
         // deploy governance token contract
         govToken = new GovToken();
-        // for (uint256 i = 0; i < registeredManufacturers.length; i++) {
-        //     nonce++;
-        //     vm.setNonce(vm.addr(deployerKey), nonce);
-        //     govToken.mint(registeredManufacturers[i], 1 * PRECISION);
-        // }
+        for (uint256 i = 0; i < registeredManufacturers.length; i++) {
+            govToken.mint(registeredManufacturers[i], 1 * PRECISION);
+        }
 
         console.log("Governance token deployed at:", address(govToken));
 
@@ -79,7 +77,7 @@ contract DeployNexTrack is Script {
         console.log("NexTrack owner before:", nexTrack.owner());
 
         vault.transferOwnership(address(nexTrack));
-        // nexTrack.transferOwnership(address(timelock));
+        nexTrack.transferOwnership(address(timelock));
 
         vm.stopBroadcast();
 

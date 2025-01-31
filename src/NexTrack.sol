@@ -31,7 +31,7 @@ import {Vault} from "./Vault.sol";
 
 contract NexTrack is Ownable {
     /*//////////////////////////////////////////////////////////
-                        ERRORS
+                            ERRORS
     //////////////////////////////////////////////////////////*/
 
     error NexTrack__NotRegisteredManufacturer();
@@ -78,6 +78,7 @@ contract NexTrack is Ownable {
         address owner; // Current supply chain owner
         uint256 totalQuantity; // Number of items in this batch
         uint256 unitPrice; // Unit price
+        bool isListed; // Is the batch listed on the marketplace
         uint256 parentBatch; // Parent batch ID
         uint256 timestamp; // Last update timestamp
     }
@@ -101,18 +102,18 @@ contract NexTrack is Ownable {
     mapping(address => uint256[]) private s_currentInventory; // Tracks current inventory, maps address to a list of batch IDs
     mapping(address => bool) private s_registeredManufacturers; // Maps manufacturers to a boolean value indicating if they are registered
 
-    mapping(uint256 => TransferRequest) private s_transferRequests;
+    mapping(uint256 => TransferRequest) private s_transferRequests; // Maps transfer request IDs to their details
     mapping(address => uint256[]) private s_sellerTransferRequests; // Maps sellers to a list of transfer request IDs raised by buyers
     mapping(address => uint256[]) private s_buyerTransferRequests; // Maps buyers to a list of transfer request IDs raised by them
 
     address[] private s_manufacturers;
+    uint256[] private s_batchIds;
     GovToken private immutable s_govToken;
     TimeLock private immutable s_timelock;
     Vault private immutable s_vault;
 
-    uint256 public constant DEFAULT_BATCH_ID = 0;
-    uint256 public constant DEFAULT_QUANTITY_TO_SHIP = 0;
-    uint256 public constant PRECISION = 1e18;
+    uint256 private constant DEFAULT_BATCH_ID = 0;
+    uint256 private constant PRECISION = 1e18;
 
     /*//////////////////////////////////////////////////////////
                         EVENTS
@@ -166,6 +167,10 @@ contract NexTrack is Ownable {
         uint256 indexed requestId, uint256 indexed batchId, address indexed buyer, uint256 quantity, uint256 timestamp
     );
 
+    event ProductBatchListed(uint256 indexed batchId, address indexed owner, string name, Category category, uint256 totalQuantity, uint256 unitPrice, uint256 timestamp);
+    event ProductBatchDelisted(uint256 indexed batchId, address indexed owner, string name, Category category, uint256 totalQuantity, uint256 unitPrice, uint256 timestamp);
+    event ProductBatchUnitPriceUpdated(uint256 indexed batchId, address indexed owner, uint256 oldUnitPrice, uint256 newUnitPrice, uint256 timestamp);
+
     /*//////////////////////////////////////////////////////////
                         MODIFIERS
     //////////////////////////////////////////////////////////*/
@@ -177,9 +182,16 @@ contract NexTrack is Ownable {
         _;
     }
 
-    modifier onlyBatchOwner(uint256 requestId) {
+    modifier callerIsBatchOwner(uint256 requestId) {
         uint256 batchId = s_transferRequests[requestId].batchId;
 
+        if (s_batches[batchId].owner != msg.sender) {
+            revert NexTrack__NotCurrentOwner();
+        }
+        _;
+    }
+
+    modifier onlyProductBatchOwner(uint256 batchId) {
         if (s_batches[batchId].owner != msg.sender) {
             revert NexTrack__NotCurrentOwner();
         }
@@ -223,6 +235,12 @@ contract NexTrack is Ownable {
                         FUNCTIONS
     //////////////////////////////////////////////////////////*/
 
+    /// @notice Initializes the NexTrack contract with initial manufacturers and required contract addresses
+    /// @dev Sets up the governance token, timelock, vault, and registers initial manufacturers
+    /// @param manufacturers Array of initial manufacturer addresses to register
+    /// @param govToken Address of the governance token contract
+    /// @param vault Address of the vault contract
+    /// @param timelock Address of the timelock contract
     constructor(address[] memory manufacturers, GovToken govToken, Vault vault, TimeLock timelock) Ownable(msg.sender) {
         s_govToken = govToken;
         s_timelock = timelock;
@@ -233,6 +251,10 @@ contract NexTrack is Ownable {
         }
     }
 
+    /// @notice Onboards a new manufacturer to the NexTrack system
+    /// @dev Only the contract owner can call this function (timelock contract)
+    /// @param manufacturer The address of the manufacturer to onboard
+    /// @custom:emits NewManufacturerOnboarded event
     function onboardNewManufacturer(address manufacturer) public onlyOwner {
         s_registeredManufacturers[manufacturer] = true;
         s_manufacturers.push(manufacturer);
@@ -240,6 +262,14 @@ contract NexTrack is Ownable {
         emit NewManufacturerOnboarded(manufacturer);
     }
 
+    /// @notice Registers a new product batch in the system
+    /// @dev Only registered manufacturers can call this function
+    /// @param name Name of the product batch
+    /// @param description Description of the product batch
+    /// @param category Category of the product
+    /// @param totalQuantity Total quantity of items in the batch
+    /// @param unitPrice Price per unit in the batch
+    /// @custom:emits ProductBatchRegistered event
     function registerProductBatch(
         string memory name,
         string memory description,
@@ -250,7 +280,13 @@ contract NexTrack is Ownable {
         _registerProductBatch(name, description, category, totalQuantity, unitPrice);
     }
 
-    function requestProductBatch(uint256 batchId, address seller, uint256 quantityRequested)
+    /// @notice Request to purchase a specific quantity from a product batch
+    /// @dev Requires the requested quantity to be available in the batch
+    /// @param batchId ID of the batch to purchase from
+    /// @param quantityRequested Amount of items requested to purchase
+    /// @return requestId The ID of the created transfer request
+    /// @custom:emits ProductBatchRequested event
+    function requestProductBatch(uint256 batchId, uint256 quantityRequested)
         public
         returns (uint256 requestId)
     {
@@ -262,21 +298,30 @@ contract NexTrack is Ownable {
         if (batch.totalQuantity < quantityRequested) {
             revert NexTrack__QuantityExceedsAvailable();
         }
-        return _requestProductBatch(batchId, seller, quantityRequested);
+        return _requestProductBatch(batchId, quantityRequested);
     }
 
-    // initiate -> already approved/rejected/completed
-    // reject -> already approved/rejected/completed
-    // confirm -> still pending/ already rejected/completed
-
-    function approveTransfer(uint256 requestId) public onlyBatchOwner(requestId) validateRequestStatus(requestId) {
+    /// @notice Approves a pending transfer request
+    /// @dev Only the current batch owner can approve the transfer
+    /// @param requestId ID of the transfer request to approve
+    /// @custom:emits TransferApproved event
+    function approveTransfer(uint256 requestId) public callerIsBatchOwner(requestId) validateRequestStatus(requestId) {
         _approveTransfer(requestId);
     }
 
-    function rejectTransfer(uint256 requestId) public onlyBatchOwner(requestId) validateRequestStatus(requestId) {
+    /// @notice Rejects a pending transfer request
+    /// @dev Only the current batch owner can reject the transfer
+    /// @param requestId ID of the transfer request to reject
+    /// @custom:emits TransferRejected event
+    function rejectTransfer(uint256 requestId) public callerIsBatchOwner(requestId) validateRequestStatus(requestId) {
         _rejectTransfer(requestId);
     }
 
+    /// @notice Confirms a transfer after it has been approved
+    /// @dev Only the intended recipient (buyer) can confirm the transfer
+    /// @param requestId ID of the transfer request to confirm
+    /// @return A tuple containing the request ID and the new batch ID
+    /// @custom:emits RequestCompleted and ReceivedAndCreatedBatch events
     function confirmTransfer(uint256 requestId)
         public
         validateStatusBeforeConfirm(requestId)
@@ -284,6 +329,38 @@ contract NexTrack is Ownable {
         returns (uint256, uint256)
     {
         return (requestId, _confirmTransfer(requestId));
+    }
+
+    /// @notice Lists a product batch on the marketplace
+    /// @dev Only the batch owner can list their batch
+    /// @param batchId ID of the batch to list
+    /// @custom:emits ProductBatchListed event
+    function listProductBatch(uint256 batchId) public onlyProductBatchOwner(batchId) {
+        ProductBatch storage batch = s_batches[batchId];
+        batch.isListed = true;
+        emit ProductBatchListed(batchId, batch.owner, batch.name, batch.category, batch.totalQuantity, batch.unitPrice, batch.timestamp);
+    }
+
+    /// @notice Removes a product batch from the marketplace listing
+    /// @dev Only the batch owner can delist their batch
+    /// @param batchId ID of the batch to delist
+    /// @custom:emits ProductBatchDelisted event
+    function delistProductBatch(uint256 batchId) public onlyProductBatchOwner(batchId) {
+        ProductBatch storage batch = s_batches[batchId];
+        batch.isListed = false;
+        emit ProductBatchDelisted(batchId, batch.owner, batch.name, batch.category, batch.totalQuantity, batch.unitPrice, batch.timestamp);
+    }
+
+    /// @notice Updates the unit price of a product batch
+    /// @dev Only the batch owner can update the price
+    /// @param batchId ID of the batch to update
+    /// @param newUnitPrice New price per unit
+    /// @custom:emits ProductBatchUnitPriceUpdated event
+    function updateBatchUnitPrice(uint256 batchId, uint256 newUnitPrice) public onlyProductBatchOwner(batchId) {
+        ProductBatch storage batch = s_batches[batchId];
+        uint256 oldUnitPrice = batch.unitPrice;
+        batch.unitPrice = newUnitPrice * PRECISION;
+        emit ProductBatchUnitPriceUpdated(batchId, batch.owner, oldUnitPrice, newUnitPrice, batch.timestamp);
     }
 
     /*////////////////////////////////////////////////////
@@ -306,13 +383,15 @@ contract NexTrack is Ownable {
             category: category,
             owner: msg.sender,
             totalQuantity: totalQuantity,
-            unitPrice: unitPrice,
+            unitPrice: unitPrice * PRECISION,
+            isListed: true,
             parentBatch: DEFAULT_BATCH_ID,
             timestamp: block.timestamp
         });
 
         s_batches[batchId] = newProductBatch;
         s_currentInventory[msg.sender].push(batchId);
+        s_batchIds.push(batchId);
 
         emit ProductBatchRegistered(
             batchId,
@@ -321,7 +400,7 @@ contract NexTrack is Ownable {
             category,
             msg.sender,
             totalQuantity,
-            unitPrice,
+            unitPrice * PRECISION,
             DEFAULT_BATCH_ID,
             block.timestamp
         );
@@ -349,12 +428,13 @@ contract NexTrack is Ownable {
         return uint64(bytes8(keccak256(abi.encodePacked(batchId, seller, quantityRequested, block.timestamp))));
     }
 
-    function _requestProductBatch(uint256 batchId, address seller, uint256 quantityRequested)
+    function _requestProductBatch(uint256 batchId, uint256 quantityRequested)
         internal
         returns (uint256 requestId)
     {
+        address seller = getBatchDetails(batchId).owner;
         requestId = _generateRequestId(batchId, seller, quantityRequested);
-        uint256 totalAmount = quantityRequested * s_batches[batchId].unitPrice;
+        uint256 totalAmount = quantityRequested * s_batches[batchId].unitPrice; // already in 18 decimal precision because of unitPrice
 
         TransferRequest memory transferRequest = TransferRequest({
             requestId: requestId,
@@ -431,10 +511,12 @@ contract NexTrack is Ownable {
             owner: msg.sender,
             totalQuantity: quantityReceived,
             unitPrice: oldBatch.unitPrice,
+            isListed: false,
             parentBatch: batchId,
             timestamp: block.timestamp
         });
         s_currentInventory[msg.sender].push(newBatchId);
+        s_batchIds.push(newBatchId);
 
         // Transfer money to seller
         s_vault.withdraw(requestId, oldBatch.owner);
@@ -463,6 +545,10 @@ contract NexTrack is Ownable {
 
     function getCurrentInventory(address owner) public view returns (uint256[] memory) {
         return s_currentInventory[owner];
+    }
+
+    function getAllBatchIds() public view returns (uint256[] memory) {
+        return s_batchIds;
     }
 
     function getBatchDetails(uint256 batchId) public view returns (ProductBatch memory) {

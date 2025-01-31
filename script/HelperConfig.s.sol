@@ -11,11 +11,11 @@ contract HelperConfig is Script {
 
     address[] public anvilRegisteredManufacturers = [address(1), address(2), address(3), address(4), address(5)];
     address[] public electroneumRegisteredManufacturers = [
-        0xdFA632D1163BABc71602ba12AD87566A76C8C476,
         0x779575dc32b4BDC36Ef56f2041AA6E42024AF88D,
         0x5Ddf1fb5F08feB33bee022FAbB7918E67e242b38,
         0x5c8adA8E4C007E89cA6D3ab85d7029eD8a71D3C5,
-        0x474Ee01D208864C6b9e63e595A924F55d0E5fF89
+        0x474Ee01D208864C6b9e63e595A924F55d0E5fF89,
+        0xCd0b706556289b539fFB8a840bEc3FD8e55fdbb7
     ];
     uint256 public constant DEFAULT_ANVIL_KEY = 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80;
     NetworkConfig private activeNetworkConfig;

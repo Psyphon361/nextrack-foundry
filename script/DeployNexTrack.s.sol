@@ -74,16 +74,20 @@ contract DeployNexTrack is Script {
         // deploy nexTrack contract
         nexTrack = new NexTrack(registeredManufacturers, govToken, vault, timelock);
         console.log("NexTrack deployed at:", address(nexTrack));
-        console.log("NexTrack owner before:", nexTrack.owner());
 
+        // transfer ownerships
         vault.transferOwnership(address(nexTrack));
+        govToken.transferOwnership(address(nexTrack));
         nexTrack.transferOwnership(address(timelock));
 
         vm.stopBroadcast();
 
-        console.log("NexTrack owner after:", nexTrack.owner());
+        console.log("NexTrack owner: ", nexTrack.owner());
         console.log("USDT Owner: ", usdt.owner());
+        console.log("Vault Owner: ", vault.owner());
+        console.log("GovToken Owner: ", govToken.owner());
         console.log("Deploy success!!!");
+        
         return (nexTrack, governor, govToken, vault, usdt);
     }
 }

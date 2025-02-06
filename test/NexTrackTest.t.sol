@@ -36,7 +36,7 @@ contract NexTrackTest is Test {
 
     uint256 public constant MIN_DELAY = 3600; // 1hr - after a vote passes
     uint256 public constant VOTING_DELAY = 17280; // number of blocks till a vote is active - 1 day in this case for 5 second block times
-    uint256 public constant VOTING_PERIOD = 120960; // number of weeks the vote is open - 7 days
+    uint256 public constant VOTING_PERIOD = 120960; // number of blocks the vote is open - 7 days for 5 second blocks
 
     uint256[] values;
     bytes[] calldatas;
@@ -62,10 +62,6 @@ contract NexTrackTest is Test {
         govToken.delegate(REGISTERED_MANUFACTURER);
         vm.prank(SECOND_REGISTERED_MANUFACTURER);
         govToken.delegate(SECOND_REGISTERED_MANUFACTURER);
-
-        // add initial set of manufacturers and transfer ownership of NexTrack to TimeLock
-        vm.startPrank(DEFAULT_ANVIL_ACCOUNT);
-        vm.stopPrank();
     }
 
     ///////////////////////

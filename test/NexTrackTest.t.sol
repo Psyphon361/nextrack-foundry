@@ -28,11 +28,10 @@ contract NexTrackTest is Test {
     NexTrack.Category public category = NexTrack.Category.Electronics;
     uint256 public TOTAL_QUANTITY = 100;
     uint256 public QUANTITY_TO_SHIP = 30;
-    uint256 public UNIT_PRICE = 2;
     uint256 public PRECISION = 1e18;
-
+    uint256 public UNIT_PRICE = 2 * PRECISION;
+    uint256 public UNIT_PRICE_ACTUAL = 2;
     uint256 public constant DEFAULT_BATCH_ID = 0;
-    uint256 public constant DEFAULT_QUANTITY_TO_SHIP = 0;
 
     uint256 public constant MIN_DELAY = 3600; // 1hr - after a vote passes
     uint256 public constant VOTING_DELAY = 17280; // number of blocks till a vote is active - 1 day in this case for 5 second block times
@@ -53,9 +52,9 @@ contract NexTrackTest is Test {
 
         // mint and approve USDT spend for USER
         vm.prank(DEFAULT_ANVIL_ACCOUNT);
-        usdt.mint(USER, 1e18);
+        usdt.mint(USER, type(uint256).max);
         vm.prank(USER);
-        usdt.approve(address(vault), 1e18);
+        usdt.approve(address(vault), type(uint256).max);
 
         // delegate voting power
         vm.prank(REGISTERED_MANUFACTURER);
@@ -85,12 +84,12 @@ contract NexTrackTest is Test {
     function testRevertsIfNotRegisteredManufacturer() public {
         vm.expectRevert(NexTrack.NexTrack__NotRegisteredManufacturer.selector);
         vm.prank(USER);
-        nexTrack.registerProductBatch(name, productDescription, category, TOTAL_QUANTITY, UNIT_PRICE);
+        nexTrack.registerProductBatch(name, productDescription, category, TOTAL_QUANTITY, UNIT_PRICE_ACTUAL);
     }
 
     function testRegisterProduct() public {
         vm.prank(REGISTERED_MANUFACTURER);
-        nexTrack.registerProductBatch(name, productDescription, category, TOTAL_QUANTITY, UNIT_PRICE);
+        nexTrack.registerProductBatch(name, productDescription, category, TOTAL_QUANTITY, UNIT_PRICE_ACTUAL);
 
         uint256 batchId = nexTrack.getCurrentInventory(REGISTERED_MANUFACTURER)[0];
         NexTrack.ProductBatch memory productBatch = nexTrack.getBatchDetails(batchId);
@@ -123,7 +122,7 @@ contract NexTrackTest is Test {
             block.timestamp
         );
         vm.prank(REGISTERED_MANUFACTURER);
-        nexTrack.registerProductBatch(name, productDescription, category, TOTAL_QUANTITY, UNIT_PRICE);
+        nexTrack.registerProductBatch(name, productDescription, category, TOTAL_QUANTITY, UNIT_PRICE_ACTUAL);
     }
 
     ////////////////////////////
@@ -132,20 +131,20 @@ contract NexTrackTest is Test {
 
     modifier productRegistered() {
         vm.prank(REGISTERED_MANUFACTURER);
-        nexTrack.registerProductBatch(name, productDescription, category, TOTAL_QUANTITY, UNIT_PRICE);
+        nexTrack.registerProductBatch(name, productDescription, category, TOTAL_QUANTITY, UNIT_PRICE_ACTUAL);
         _;
     }
 
     function testRevertsIfQuantityExceedsAvailable() public productRegistered {
         uint256 batchId = nexTrack.getCurrentInventory(REGISTERED_MANUFACTURER)[0];
         vm.expectRevert(NexTrack.NexTrack__QuantityExceedsAvailable.selector);
-        nexTrack.requestProductBatch(batchId, USER, TOTAL_QUANTITY + 1);
+        nexTrack.requestProductBatch(batchId, TOTAL_QUANTITY + 1);
     }
 
     function testRequestProductBatch() public productRegistered {
         uint256 batchId = nexTrack.getCurrentInventory(REGISTERED_MANUFACTURER)[0];
         vm.prank(USER);
-        uint256 requestId = nexTrack.requestProductBatch(batchId, REGISTERED_MANUFACTURER, QUANTITY_TO_SHIP);
+        uint256 requestId = nexTrack.requestProductBatch(batchId, QUANTITY_TO_SHIP);
 
         NexTrack.TransferRequest memory requestDetails = nexTrack.getTransferRequestDetails(requestId);
         assertEq(requestDetails.batchId, batchId);
@@ -175,7 +174,7 @@ contract NexTrackTest is Test {
             block.timestamp
         );
         vm.prank(USER);
-        nexTrack.requestProductBatch(batchId, REGISTERED_MANUFACTURER, QUANTITY_TO_SHIP);
+        nexTrack.requestProductBatch(batchId, QUANTITY_TO_SHIP);
     }
 
     ////////////////////////////////
@@ -185,7 +184,7 @@ contract NexTrackTest is Test {
     modifier productRequested() {
         uint256 batchId = nexTrack.getCurrentInventory(REGISTERED_MANUFACTURER)[0];
         vm.prank(USER);
-        nexTrack.requestProductBatch(batchId, REGISTERED_MANUFACTURER, QUANTITY_TO_SHIP);
+        nexTrack.requestProductBatch(batchId, QUANTITY_TO_SHIP);
         _;
     }
 
@@ -515,7 +514,6 @@ contract NexTrackTest is Test {
 
     function testUSDTDepositOnNewRequest() public productRegistered productRequested {
         uint256 vaultBalance = usdt.balanceOf(address(vault));
-        // console2.log("Vault balance: ", vaultBalance);
         assertEq(vaultBalance, QUANTITY_TO_SHIP * UNIT_PRICE);
     }
 
@@ -548,11 +546,77 @@ contract NexTrackTest is Test {
         uint256 batchId = nexTrack.getCurrentInventory(REGISTERED_MANUFACTURER)[0];
         vm.prank(USER);
         vm.expectRevert(Vault.Vault__CannotDepositAgain.selector);
-        nexTrack.requestProductBatch(batchId, REGISTERED_MANUFACTURER, QUANTITY_TO_SHIP);
+        nexTrack.requestProductBatch(batchId, QUANTITY_TO_SHIP);
     }
 
     function testGetUsdtAddress() public view {
         address usdtAddress = vault.getUsdtAddress();
         assertEq(usdtAddress, address(usdt));
+    }
+
+    function testGetVaultUsdtBalance() public productRegistered productRequested {
+        uint256 vaultUsdtBalance = vault.getVaultUsdtBalance();
+        assertEq(vaultUsdtBalance, QUANTITY_TO_SHIP * UNIT_PRICE);
+    }
+
+    function testGetEscrowedAmountForRequest() public productRegistered productRequested {
+        uint256 requestId = nexTrack.getSellerTransferRequests(REGISTERED_MANUFACTURER)[0];
+        uint256 escrowedAmount = vault.getEscrowedAmountForRequest(requestId);
+        assertEq(escrowedAmount, QUANTITY_TO_SHIP * UNIT_PRICE);
+    }
+
+    /*////////////////////////////////////////////
+            Product Batch Interaction Tests
+    ////////////////////////////////////////////*/
+
+    modifier requestCompleted() {
+        uint256 requestId = nexTrack.getSellerTransferRequests(REGISTERED_MANUFACTURER)[0];
+        vm.prank(USER);
+        nexTrack.confirmTransfer(requestId);
+        _;
+    }
+    
+    function testRevertsListProductBatchIfNotOwner() public productRegistered productRequested transferApproved requestCompleted {
+        uint256 sellerBatchId = nexTrack.getCurrentInventory(USER)[0];
+        vm.prank(REGISTERED_MANUFACTURER);
+        vm.expectRevert(NexTrack.NexTrack__NotCurrentOwner.selector);
+        nexTrack.listProductBatch(sellerBatchId);
+    }
+
+    function testListsProductBatchAndEmitsEvent() public productRegistered productRequested transferApproved requestCompleted {
+        uint256 sellerBatchId = nexTrack.getCurrentInventory(USER)[0];
+        vm.expectEmit(true, true, true, false, address(nexTrack));
+        emit NexTrack.ProductBatchListed(sellerBatchId, USER, name, category, QUANTITY_TO_SHIP, UNIT_PRICE, block.timestamp);
+        vm.prank(USER);
+        nexTrack.listProductBatch(sellerBatchId);
+        NexTrack.ProductBatch memory batch = nexTrack.getBatchDetails(sellerBatchId);    
+        assertEq(batch.isListed, true);
+    }
+
+    function testDelistsProductBatchAndEmitsEvent() public productRegistered {
+        uint256 batchId = nexTrack.getCurrentInventory(REGISTERED_MANUFACTURER)[0];
+        vm.expectEmit(true, true, true, false, address(nexTrack));
+        emit NexTrack.ProductBatchDelisted(batchId, REGISTERED_MANUFACTURER, name, category, QUANTITY_TO_SHIP, UNIT_PRICE, block.timestamp);
+        vm.prank(REGISTERED_MANUFACTURER);
+        nexTrack.delistProductBatch(batchId);
+        NexTrack.ProductBatch memory batch = nexTrack.getBatchDetails(batchId);    
+        assertEq(batch.isListed, false);
+    }
+
+    function testUpdatesUnitPriceAndEmitsEvent() public productRegistered {
+        uint256 batchId = nexTrack.getCurrentInventory(REGISTERED_MANUFACTURER)[0];
+        uint256 oldUnitPrice = nexTrack.getBatchDetails(batchId).unitPrice;
+        uint256 newUnitPrice = 5;
+        vm.expectEmit(true, true, true, false, address(nexTrack));
+        emit NexTrack.ProductBatchUnitPriceUpdated(batchId, REGISTERED_MANUFACTURER, oldUnitPrice, newUnitPrice, block.timestamp);
+        vm.prank(REGISTERED_MANUFACTURER);
+        nexTrack.updateBatchUnitPrice(batchId, newUnitPrice);
+        NexTrack.ProductBatch memory batch = nexTrack.getBatchDetails(batchId);    
+        assertEq(batch.unitPrice, newUnitPrice * PRECISION);
+    }
+
+    function testGetAllBatchIds() public productRegistered productRequested transferApproved requestCompleted {
+        uint256[] memory batchIds = nexTrack.getAllBatchIds();
+        assertEq(batchIds.length, 2);
     }
 }

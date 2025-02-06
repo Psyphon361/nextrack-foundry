@@ -359,7 +359,7 @@ contract NexTrack is Ownable {
     function updateBatchUnitPrice(uint256 batchId, uint256 newUnitPrice) public onlyProductBatchOwner(batchId) {
         ProductBatch storage batch = s_batches[batchId];
         uint256 oldUnitPrice = batch.unitPrice;
-        batch.unitPrice = newUnitPrice * PRECISION;
+        batch.unitPrice = newUnitPrice;
         emit ProductBatchUnitPriceUpdated(batchId, batch.owner, oldUnitPrice, newUnitPrice, batch.timestamp);
     }
 
@@ -383,7 +383,7 @@ contract NexTrack is Ownable {
             category: category,
             owner: msg.sender,
             totalQuantity: totalQuantity,
-            unitPrice: unitPrice * PRECISION,
+            unitPrice: unitPrice,
             isListed: true,
             parentBatch: DEFAULT_BATCH_ID,
             timestamp: block.timestamp
@@ -400,7 +400,7 @@ contract NexTrack is Ownable {
             category,
             msg.sender,
             totalQuantity,
-            unitPrice * PRECISION,
+            unitPrice,
             DEFAULT_BATCH_ID,
             block.timestamp
         );

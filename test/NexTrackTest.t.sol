@@ -29,8 +29,7 @@ contract NexTrackTest is Test {
     uint256 public TOTAL_QUANTITY = 100;
     uint256 public QUANTITY_TO_SHIP = 30;
     uint256 public PRECISION = 1e18;
-    uint256 public UNIT_PRICE = 2 * PRECISION;
-    uint256 public UNIT_PRICE_ACTUAL = 2;
+    uint256 public UNIT_PRICE = 2;
     uint256 public constant DEFAULT_BATCH_ID = 0;
 
     uint256 public constant MIN_DELAY = 3600; // 1hr - after a vote passes
@@ -48,7 +47,6 @@ contract NexTrackTest is Test {
     function setUp() public {
         deployer = new DeployNexTrack();
         (nexTrack, governor, govToken, vault, usdt) = deployer.run();
-        console2.log("NexTrack Address: ", address(nexTrack));
 
         // mint and approve USDT spend for USER
         vm.prank(DEFAULT_ANVIL_ACCOUNT);
@@ -84,12 +82,12 @@ contract NexTrackTest is Test {
     function testRevertsIfNotRegisteredManufacturer() public {
         vm.expectRevert(NexTrack.NexTrack__NotRegisteredManufacturer.selector);
         vm.prank(USER);
-        nexTrack.registerProductBatch(name, productDescription, category, TOTAL_QUANTITY, UNIT_PRICE_ACTUAL);
+        nexTrack.registerProductBatch(name, productDescription, category, TOTAL_QUANTITY, UNIT_PRICE * PRECISION);
     }
 
     function testRegisterProduct() public {
         vm.prank(REGISTERED_MANUFACTURER);
-        nexTrack.registerProductBatch(name, productDescription, category, TOTAL_QUANTITY, UNIT_PRICE_ACTUAL);
+        nexTrack.registerProductBatch(name, productDescription, category, TOTAL_QUANTITY, UNIT_PRICE * PRECISION);
 
         uint256 batchId = nexTrack.getCurrentInventory(REGISTERED_MANUFACTURER)[0];
         NexTrack.ProductBatch memory productBatch = nexTrack.getBatchDetails(batchId);
@@ -117,12 +115,12 @@ contract NexTrackTest is Test {
             category,
             REGISTERED_MANUFACTURER,
             TOTAL_QUANTITY,
-            UNIT_PRICE,
+            UNIT_PRICE * PRECISION,
             DEFAULT_BATCH_ID,
             block.timestamp
         );
         vm.prank(REGISTERED_MANUFACTURER);
-        nexTrack.registerProductBatch(name, productDescription, category, TOTAL_QUANTITY, UNIT_PRICE_ACTUAL);
+        nexTrack.registerProductBatch(name, productDescription, category, TOTAL_QUANTITY, UNIT_PRICE * PRECISION);
     }
 
     ////////////////////////////
@@ -131,7 +129,7 @@ contract NexTrackTest is Test {
 
     modifier productRegistered() {
         vm.prank(REGISTERED_MANUFACTURER);
-        nexTrack.registerProductBatch(name, productDescription, category, TOTAL_QUANTITY, UNIT_PRICE_ACTUAL);
+        nexTrack.registerProductBatch(name, productDescription, category, TOTAL_QUANTITY, UNIT_PRICE * PRECISION);
         _;
     }
 
@@ -169,7 +167,7 @@ contract NexTrackTest is Test {
             REGISTERED_MANUFACTURER,
             USER,
             QUANTITY_TO_SHIP,
-            UNIT_PRICE * QUANTITY_TO_SHIP,
+            UNIT_PRICE * PRECISION * QUANTITY_TO_SHIP,
             NexTrack.RequestStatus.Pending,
             block.timestamp
         );
@@ -401,7 +399,7 @@ contract NexTrackTest is Test {
             category,
             USER,
             QUANTITY_TO_SHIP,
-            UNIT_PRICE,
+            UNIT_PRICE * PRECISION,
             parentBatchId,
             block.timestamp
         );
@@ -514,20 +512,20 @@ contract NexTrackTest is Test {
 
     function testUSDTDepositOnNewRequest() public productRegistered productRequested {
         uint256 vaultBalance = usdt.balanceOf(address(vault));
-        assertEq(vaultBalance, QUANTITY_TO_SHIP * UNIT_PRICE);
+        assertEq(vaultBalance, QUANTITY_TO_SHIP * UNIT_PRICE * PRECISION);
     }
 
     function testUSDTRefundOnRejectRequest() public productRegistered productRequested {
         uint256 requestId = nexTrack.getSellerTransferRequests(REGISTERED_MANUFACTURER)[0];
         uint256 vaultBalanceBefore = usdt.balanceOf(address(vault));
         uint256 userBalanceBefore = usdt.balanceOf(USER);
-        assertEq(vaultBalanceBefore, QUANTITY_TO_SHIP * UNIT_PRICE);
+        assertEq(vaultBalanceBefore, QUANTITY_TO_SHIP * UNIT_PRICE * PRECISION);
         vm.prank(REGISTERED_MANUFACTURER);
         nexTrack.rejectTransfer(requestId);
         uint256 vaultBalanceAfter = usdt.balanceOf(address(vault));
         uint256 userBalanceAfter = usdt.balanceOf(USER);
         assertEq(vaultBalanceAfter, 0);
-        assertEq(userBalanceAfter, userBalanceBefore + QUANTITY_TO_SHIP * UNIT_PRICE);
+        assertEq(userBalanceAfter, userBalanceBefore + QUANTITY_TO_SHIP * UNIT_PRICE * PRECISION);
     }
 
     function testUSDTWithdrawOnConfirmRequest() public productRegistered productRequested transferApproved {
@@ -556,13 +554,13 @@ contract NexTrackTest is Test {
 
     function testGetVaultUsdtBalance() public productRegistered productRequested {
         uint256 vaultUsdtBalance = vault.getVaultUsdtBalance();
-        assertEq(vaultUsdtBalance, QUANTITY_TO_SHIP * UNIT_PRICE);
+        assertEq(vaultUsdtBalance, QUANTITY_TO_SHIP * UNIT_PRICE * PRECISION);
     }
 
     function testGetEscrowedAmountForRequest() public productRegistered productRequested {
         uint256 requestId = nexTrack.getSellerTransferRequests(REGISTERED_MANUFACTURER)[0];
         uint256 escrowedAmount = vault.getEscrowedAmountForRequest(requestId);
-        assertEq(escrowedAmount, QUANTITY_TO_SHIP * UNIT_PRICE);
+        assertEq(escrowedAmount, QUANTITY_TO_SHIP * UNIT_PRICE * PRECISION);
     }
 
     /*////////////////////////////////////////////
@@ -586,7 +584,7 @@ contract NexTrackTest is Test {
     function testListsProductBatchAndEmitsEvent() public productRegistered productRequested transferApproved requestCompleted {
         uint256 sellerBatchId = nexTrack.getCurrentInventory(USER)[0];
         vm.expectEmit(true, true, true, false, address(nexTrack));
-        emit NexTrack.ProductBatchListed(sellerBatchId, USER, name, category, QUANTITY_TO_SHIP, UNIT_PRICE, block.timestamp);
+        emit NexTrack.ProductBatchListed(sellerBatchId, USER, name, category, QUANTITY_TO_SHIP, UNIT_PRICE * PRECISION, block.timestamp);
         vm.prank(USER);
         nexTrack.listProductBatch(sellerBatchId);
         NexTrack.ProductBatch memory batch = nexTrack.getBatchDetails(sellerBatchId);    
@@ -596,7 +594,7 @@ contract NexTrackTest is Test {
     function testDelistsProductBatchAndEmitsEvent() public productRegistered {
         uint256 batchId = nexTrack.getCurrentInventory(REGISTERED_MANUFACTURER)[0];
         vm.expectEmit(true, true, true, false, address(nexTrack));
-        emit NexTrack.ProductBatchDelisted(batchId, REGISTERED_MANUFACTURER, name, category, QUANTITY_TO_SHIP, UNIT_PRICE, block.timestamp);
+        emit NexTrack.ProductBatchDelisted(batchId, REGISTERED_MANUFACTURER, name, category, QUANTITY_TO_SHIP, UNIT_PRICE * PRECISION, block.timestamp);
         vm.prank(REGISTERED_MANUFACTURER);
         nexTrack.delistProductBatch(batchId);
         NexTrack.ProductBatch memory batch = nexTrack.getBatchDetails(batchId);    
@@ -610,7 +608,7 @@ contract NexTrackTest is Test {
         vm.expectEmit(true, true, true, false, address(nexTrack));
         emit NexTrack.ProductBatchUnitPriceUpdated(batchId, REGISTERED_MANUFACTURER, oldUnitPrice, newUnitPrice, block.timestamp);
         vm.prank(REGISTERED_MANUFACTURER);
-        nexTrack.updateBatchUnitPrice(batchId, newUnitPrice);
+        nexTrack.updateBatchUnitPrice(batchId, newUnitPrice * PRECISION);
         NexTrack.ProductBatch memory batch = nexTrack.getBatchDetails(batchId);    
         assertEq(batch.unitPrice, newUnitPrice * PRECISION);
     }

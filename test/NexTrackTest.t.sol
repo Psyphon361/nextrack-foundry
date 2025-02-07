@@ -21,6 +21,7 @@ contract NexTrackTest is Test {
     address public RANDOM_USER = makeAddr("random_user");
     address public REGISTERED_MANUFACTURER = address(1);
     address public SECOND_REGISTERED_MANUFACTURER = address(2);
+    address public THIRD_REGISTERED_MANUFACTURER = address(3);
     address public DEFAULT_ANVIL_ACCOUNT = 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266;
 
     string public name = "Earphones";
@@ -33,8 +34,11 @@ contract NexTrackTest is Test {
     uint256 public constant DEFAULT_BATCH_ID = 0;
 
     uint256 public constant MIN_DELAY = 3600; // 1hr - after a vote passes
-    uint256 public constant VOTING_DELAY = 17280; // number of blocks till a vote is active - 1 day in this case for 5 second block times
-    uint256 public constant VOTING_PERIOD = 120960; // number of blocks the vote is open - 7 days for 5 second blocks
+    // uint256 public constant VOTING_DELAY = 17280; // number of blocks till a vote is active - 1 day in this case for 5 second block times
+    // uint256 public constant VOTING_PERIOD = 120960; // number of blocks the vote is open - 7 days for 5 second blocks
+
+    uint256 public constant VOTING_DELAY = 60; // number of blocks till a vote is active - 1 day in this case for 5 second block times
+    uint256 public constant VOTING_PERIOD = 60; // number of blocks the vote is open - 7 days for 5 second blocks
 
     uint256[] values;
     bytes[] calldatas;
@@ -59,6 +63,8 @@ contract NexTrackTest is Test {
         govToken.delegate(REGISTERED_MANUFACTURER);
         vm.prank(SECOND_REGISTERED_MANUFACTURER);
         govToken.delegate(SECOND_REGISTERED_MANUFACTURER);
+        vm.prank(THIRD_REGISTERED_MANUFACTURER);
+        govToken.delegate(THIRD_REGISTERED_MANUFACTURER);
     }
 
     ///////////////////////
@@ -447,6 +453,10 @@ contract NexTrackTest is Test {
 
         // second vote
         vm.prank(SECOND_REGISTERED_MANUFACTURER);
+        governor.castVoteWithReason(proposalId, voteWay, reason);
+
+        // third vote
+        vm.prank(THIRD_REGISTERED_MANUFACTURER);
         governor.castVoteWithReason(proposalId, voteWay, reason);
 
         vm.warp(block.timestamp + VOTING_PERIOD + 1);

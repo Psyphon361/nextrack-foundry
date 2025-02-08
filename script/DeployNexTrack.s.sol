@@ -21,9 +21,8 @@ contract DeployNexTrack is Script {
     address[] proposers;
     address[] executors;
 
-    uint256 public constant MIN_DELAY = 3600; // 1hr - after a vote passes
-    uint256 public constant VOTING_DELAY = 1; // how many blocks till a vote is active
-    uint256 public constant VOTING_PERIOD = 50400;
+    // uint256 public constant MIN_DELAY = 3600; // 1hr - after a vote passes
+    uint256 public constant MIN_DELAY = 300; // 5min - after a vote passes - only for testing, revert to line #24 for production.
     uint256 public constant PRECISION = 1e18;
 
     address[] public registeredManufacturers;

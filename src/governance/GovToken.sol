@@ -10,7 +10,7 @@ import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 contract GovToken is ERC20, ERC20Permit, ERC20Votes, Ownable {
     constructor() ERC20("NexTrack", "NXT") ERC20Permit("NexTrack") Ownable(msg.sender) {}
 
-    function mint(address to, uint256 amount) public {
+    function mint(address to, uint256 amount) public onlyOwner {
         super._mint(to, amount);
     }
 

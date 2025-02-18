@@ -23,6 +23,7 @@ contract NexTrackTest is Test {
     address public SECOND_REGISTERED_MANUFACTURER = address(2);
     address public THIRD_REGISTERED_MANUFACTURER = address(3);
     address public DEFAULT_ANVIL_ACCOUNT = 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266;
+    string public SAMPLE_IPFS_URL = "https://gateway.pinata.cloud/ipfs/QmVAwrskX9JcHxifagNMXFxpB47KVMnuH9QuZzwaig8ewu";
 
     string public name = "Earphones";
     string public productDescription = "High quality earphones";
@@ -88,12 +89,12 @@ contract NexTrackTest is Test {
     function testRevertsIfNotRegisteredManufacturer() public {
         vm.expectRevert(NexTrack.NexTrack__NotRegisteredManufacturer.selector);
         vm.prank(USER);
-        nexTrack.registerProductBatch(name, productDescription, category, TOTAL_QUANTITY, UNIT_PRICE * PRECISION);
+        nexTrack.registerProductBatch(name, productDescription, category, TOTAL_QUANTITY, UNIT_PRICE * PRECISION, SAMPLE_IPFS_URL);
     }
 
     function testRegisterProduct() public {
         vm.prank(REGISTERED_MANUFACTURER);
-        nexTrack.registerProductBatch(name, productDescription, category, TOTAL_QUANTITY, UNIT_PRICE * PRECISION);
+        nexTrack.registerProductBatch(name, productDescription, category, TOTAL_QUANTITY, UNIT_PRICE * PRECISION, SAMPLE_IPFS_URL);
 
         uint256 batchId = nexTrack.getCurrentInventory(REGISTERED_MANUFACTURER)[0];
         NexTrack.ProductBatch memory productBatch = nexTrack.getBatchDetails(batchId);
@@ -122,11 +123,12 @@ contract NexTrackTest is Test {
             REGISTERED_MANUFACTURER,
             TOTAL_QUANTITY,
             UNIT_PRICE * PRECISION,
+            SAMPLE_IPFS_URL,
             DEFAULT_BATCH_ID,
             block.timestamp
         );
         vm.prank(REGISTERED_MANUFACTURER);
-        nexTrack.registerProductBatch(name, productDescription, category, TOTAL_QUANTITY, UNIT_PRICE * PRECISION);
+        nexTrack.registerProductBatch(name, productDescription, category, TOTAL_QUANTITY, UNIT_PRICE * PRECISION, SAMPLE_IPFS_URL);
     }
 
     ////////////////////////////
@@ -135,7 +137,7 @@ contract NexTrackTest is Test {
 
     modifier productRegistered() {
         vm.prank(REGISTERED_MANUFACTURER);
-        nexTrack.registerProductBatch(name, productDescription, category, TOTAL_QUANTITY, UNIT_PRICE * PRECISION);
+        nexTrack.registerProductBatch(name, productDescription, category, TOTAL_QUANTITY, UNIT_PRICE * PRECISION, SAMPLE_IPFS_URL);
         _;
     }
 
@@ -242,6 +244,11 @@ contract NexTrackTest is Test {
         nexTrack.approveTransfer(requestId);
         NexTrack.TransferRequest memory requestDetails = nexTrack.getTransferRequestDetails(requestId);
         assertEq(uint8(requestDetails.status), uint8(NexTrack.RequestStatus.Approved));
+        
+        // assert that the requested quantity is subtracted from original batch quantity
+        uint256 batchId = requestDetails.batchId;
+        NexTrack.ProductBatch memory batch = nexTrack.getBatchDetails(batchId);
+        assertEq(batch.totalQuantity, TOTAL_QUANTITY - QUANTITY_TO_SHIP);
     }
 
     function testApproveTransferEmitsEvent() public productRegistered productRequested {
@@ -406,6 +413,7 @@ contract NexTrackTest is Test {
             USER,
             QUANTITY_TO_SHIP,
             UNIT_PRICE * PRECISION,
+            SAMPLE_IPFS_URL,
             parentBatchId,
             block.timestamp
         );

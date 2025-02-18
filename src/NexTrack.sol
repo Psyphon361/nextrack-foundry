@@ -35,6 +35,7 @@ contract NexTrack is Ownable {
     //////////////////////////////////////////////////////////*/
 
     error NexTrack__NotRegisteredManufacturer();
+    error NexTrack__CannotRequestFromSelf();
     error NexTrack__NotCurrentOwner();
     error NexTrack__NotIntendedRecipient();
     error NexTrack__QuantityExceedsAvailable();
@@ -78,6 +79,7 @@ contract NexTrack is Ownable {
         address owner; // Current supply chain owner
         uint256 totalQuantity; // Number of items in this batch
         uint256 unitPrice; // Unit price
+        string ipfsUrl;
         bool isListed; // Is the batch listed on the marketplace
         uint256 parentBatch; // Parent batch ID
         uint256 timestamp; // Last update timestamp
@@ -129,6 +131,7 @@ contract NexTrack is Ownable {
         address indexed owner,
         uint256 totalQuantity,
         uint256 unitPrice,
+        string ipfsUrl,
         uint256 indexed parentBatch,
         uint256 timestamp
     );
@@ -144,6 +147,7 @@ contract NexTrack is Ownable {
         address indexed owner,
         uint256 totalQuantity,
         uint256 unitPrice,
+        string ipfsUrl,
         uint256 parentBatch,
         uint256 timestamp
     );
@@ -178,6 +182,13 @@ contract NexTrack is Ownable {
     modifier onlyRegisteredManufacturer() {
         if (!s_registeredManufacturers[msg.sender]) {
             revert NexTrack__NotRegisteredManufacturer();
+        }
+        _;
+    }
+
+    modifier notBatchOwner(uint256 batchId) {
+        if (s_batches[batchId].owner == msg.sender) {
+            revert NexTrack__CannotRequestFromSelf();
         }
         _;
     }
@@ -275,9 +286,10 @@ contract NexTrack is Ownable {
         string memory description,
         Category category,
         uint256 totalQuantity,
-        uint256 unitPrice
+        uint256 unitPrice,
+        string memory ipfsUrl
     ) public onlyRegisteredManufacturer {
-        _registerProductBatch(name, description, category, totalQuantity, unitPrice);
+        _registerProductBatch(name, description, category, totalQuantity, unitPrice, ipfsUrl);
     }
 
     /// @notice Request to purchase a specific quantity from a product batch
@@ -288,6 +300,7 @@ contract NexTrack is Ownable {
     /// @custom:emits ProductBatchRequested event
     function requestProductBatch(uint256 batchId, uint256 quantityRequested)
         public
+        notBatchOwner(batchId)
         returns (uint256 requestId)
     {
         if (quantityRequested == 0) {
@@ -372,7 +385,8 @@ contract NexTrack is Ownable {
         string memory description,
         Category category,
         uint256 totalQuantity,
-        uint256 unitPrice
+        uint256 unitPrice,
+        string memory ipfsUrl
     ) internal {
         uint256 batchId = _generateProductId(name, category, totalQuantity, DEFAULT_BATCH_ID);
 
@@ -384,6 +398,7 @@ contract NexTrack is Ownable {
             owner: msg.sender,
             totalQuantity: totalQuantity,
             unitPrice: unitPrice,
+            ipfsUrl: ipfsUrl,
             isListed: true,
             parentBatch: DEFAULT_BATCH_ID,
             timestamp: block.timestamp
@@ -401,6 +416,7 @@ contract NexTrack is Ownable {
             msg.sender,
             totalQuantity,
             unitPrice,
+            ipfsUrl,
             DEFAULT_BATCH_ID,
             block.timestamp
         );
@@ -472,6 +488,7 @@ contract NexTrack is Ownable {
         ProductBatch storage batch = s_batches[request.batchId];
         request.status = RequestStatus.Approved;
         request.timestamp = block.timestamp;
+        batch.totalQuantity -= request.quantityRequested;
         batch.timestamp = block.timestamp;
 
         emit TransferApproved(requestId, request.batchId, request.buyer, request.quantityRequested, block.timestamp);
@@ -494,7 +511,6 @@ contract NexTrack is Ownable {
 
         // Update parent batch
         oldBatch.timestamp = block.timestamp;
-        oldBatch.totalQuantity -= quantityReceived;
 
         request.status = RequestStatus.Completed;
         request.timestamp = block.timestamp;
@@ -511,6 +527,7 @@ contract NexTrack is Ownable {
             owner: msg.sender,
             totalQuantity: quantityReceived,
             unitPrice: oldBatch.unitPrice,
+            ipfsUrl: oldBatch.ipfsUrl,
             isListed: false,
             parentBatch: batchId,
             timestamp: block.timestamp
@@ -532,6 +549,7 @@ contract NexTrack is Ownable {
             msg.sender,
             quantityReceived,
             oldBatch.unitPrice,
+            oldBatch.ipfsUrl,
             batchId,
             block.timestamp
         );

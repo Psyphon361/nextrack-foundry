@@ -66,6 +66,9 @@ contract DeployNexTrack is Script {
 
         // deploy mock USDT contract
         usdt = new USDTMock();
+        for (uint256 i = 0; i < registeredManufacturers.length; i++) {
+            usdt.mint(registeredManufacturers[i], 10000 * PRECISION);
+        }
 
         // deploy vault contract
         vault = new Vault(address(usdt));

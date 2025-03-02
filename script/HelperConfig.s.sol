@@ -31,7 +31,7 @@ contract HelperConfig is Script {
     function getElectroneumConfig() public view returns (NetworkConfig memory) {
         return NetworkConfig({
             registeredManufacturers: electroneumRegisteredManufacturers,
-            deployerKey: vm.envUint("PRIVATE_KEY")
+            deployerKey: /*vm.envUint("PRIVATE_KEY")*/ 0
         });
     }
 

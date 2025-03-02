@@ -39,7 +39,7 @@ contract DeployNexTrack is Script {
         registeredManufacturers = networkConfig.registeredManufacturers;
         deployerKey = networkConfig.deployerKey;
 
-        vm.startBroadcast(deployerKey);
+        vm.startBroadcast();
 
         // deploy governance token contract
         govToken = new GovToken();

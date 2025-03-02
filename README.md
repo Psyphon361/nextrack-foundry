@@ -126,6 +126,8 @@ forge script script/DeployNexTrack.s.sol:DeployNexTrack --account etnDeployer --
 
 ## 📖 How It Works
 
+<img src="./public/nextrack_architecture_darkmode_fixed.svg" width="800">
+
 ### Supply Chain Flow
 
 1. **Manufacturer Registration**: Manufacturers are onboarded through governance voting
